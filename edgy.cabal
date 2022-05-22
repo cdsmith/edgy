@@ -29,6 +29,7 @@ executable edgy
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
-    build-depends:    base, containers, dependent-map, prim-uniq, stm
+    build-depends:    base, containers, dependent-map, prim-uniq, stm, some, set-extra
     hs-source-dirs:   app
     default-language: Haskell2010
+    ghc-options:      -Wall
