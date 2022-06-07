@@ -1,0 +1,3 @@
+packages:
+   .
+   ./third_party/*/*.cabal
