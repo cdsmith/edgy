@@ -17,6 +17,18 @@ import Data.Proxy (Proxy)
 
 data Cardinality = Optional | One | Many | Some
 
+instance Semigroup Cardinality where
+  One <> c = c
+  c <> One = c
+  Optional <> Optional = Optional
+  Optional <> _ = Many
+  _ <> Optional = Many
+  Some <> Some = Some
+  _ <> _ = Many
+
+instance Monoid Cardinality where
+  mempty = One
+
 type Numerous :: Cardinality -> Type -> Type
 type family Numerous c t where
   Numerous Optional t = Maybe t
