@@ -26,29 +26,29 @@ type family Numerous c t where
 
 type KnownCardinality :: Cardinality -> Constraint
 class KnownCardinality c where
-  collection :: Proxy c -> [a] -> Maybe (Numerous c a)
+  toCardinality :: Proxy c -> [a] -> Maybe (Numerous c a)
   fromCardinality :: Proxy c -> Numerous c a -> [a]
 
 instance KnownCardinality Optional where
-  collection _ [] = Just Nothing
-  collection _ [x] = Just (Just x)
-  collection _ _ = Nothing
+  toCardinality _ [] = Just Nothing
+  toCardinality _ [x] = Just (Just x)
+  toCardinality _ _ = Nothing
 
   fromCardinality _ Nothing = []
   fromCardinality _ (Just x) = [x]
 
 instance KnownCardinality One where
-  collection _ [x] = Just x
-  collection _ _ = Nothing
+  toCardinality _ [x] = Just x
+  toCardinality _ _ = Nothing
 
   fromCardinality _ x = [x]
 
 instance KnownCardinality Many where
-  collection _ = Just
+  toCardinality _ = Just
   fromCardinality _ = id
 
 instance KnownCardinality Some where
-  collection _ [] = Nothing
-  collection _ (x : xs) = Just (x :| xs)
+  toCardinality _ [] = Nothing
+  toCardinality _ (x : xs) = Just (x :| xs)
 
   fromCardinality _ = NonEmpty.toList

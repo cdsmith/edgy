@@ -47,10 +47,10 @@ import Data.TCache.DefaultPersistence (Indexable (..), Serializable (..))
 import Data.Type.Equality ((:~:) (..))
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
+import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import GHC.TypeLits (ErrorMessage (Text), KnownSymbol, Symbol, TypeError)
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
-import qualified Data.UUID as UUID
 
 type Schema = [SchemaDef]
 
@@ -360,7 +360,7 @@ getRelated _ (Node ref) = do
       let nodes = case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
             Just (RelatedVal ns) -> ns
             Nothing -> []
-      case collection (Proxy :: Proxy n) nodes of
+      case toCardinality (Proxy :: Proxy n) nodes of
         Just result -> return result
         Nothing -> error "getRelated: bad cardinality"
     Nothing -> error "getRelated: node not found"
