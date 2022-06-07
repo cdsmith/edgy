@@ -398,11 +398,11 @@ removeFromRelation ::
     Related schema relation,
     Typeable (Domain schema relation)
   ) =>
-  Node schema (Domain schema relation) ->
   Proxy relation ->
+  Node schema (Domain schema relation) ->
   Node schema (Codomain schema relation) ->
   STM ()
-removeFromRelation (Node ref) _ target = do
+removeFromRelation _ (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
@@ -426,11 +426,11 @@ setRelation ::
     n ~ CodomainCardinality schema relation
   ) =>
   Related schema relation =>
-  Node schema (Domain schema relation) ->
   Proxy relation ->
+  Node schema (Domain schema relation) ->
   Numerous n (Node schema (Codomain schema relation)) ->
   STM ()
-setRelation (Node ref) _ target = do
+setRelation _ (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) ->
@@ -449,10 +449,10 @@ clearRelation ::
     Related schema relation,
     Typeable (Domain schema relation)
   ) =>
-  Node schema (Domain schema relation) ->
   Proxy relation ->
+  Node schema (Domain schema relation) ->
   STM ()
-clearRelation (Node ref) _ = do
+clearRelation _ (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
