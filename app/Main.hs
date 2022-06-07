@@ -7,24 +7,24 @@ module Main where
 
 import Cardinality (Cardinality (..))
 import Control.Concurrent.STM (STM, atomically)
+import Control.Monad (filterM, (<=<))
+import Control.Monad.Extra (concatMapM)
+import Data.List ((\\))
 import Data.Proxy (Proxy (..))
+import Data.TCache (syncCache)
+import Data.Typeable (Typeable)
 import Schema
   ( Node,
     NodeType (..),
     Relation (..),
     SchemaDef (..),
-    addToRelation,
+    addRelated,
     bigBang,
     getAttr,
     getRelated,
     newNode,
     setAttr,
   )
-import Control.Monad (filterM, (<=<))
-import Data.List ((\\))
-import Control.Monad.Extra (concatMapM)
-import Data.Typeable (Typeable)
-import Data.TCache (syncCache)
 
 class (Typeable schema, Typeable record) => IsNode schema record where
   get :: Node schema (DataNode record) -> STM record
@@ -113,41 +113,41 @@ makeUniverse = do
   jane <- new Person {pName = "Jane", age = 21}
   jose <- new Person {pName = "Jose", age = 22}
 
-  addToRelation existingPerson universe bob
-  addToRelation existingPerson universe jane
-  addToRelation existingPerson universe jose
+  addRelated existingPerson universe bob
+  addRelated existingPerson universe jane
+  addRelated existingPerson universe jose
 
   poker <- new Activity {aName = "Poker"}
   hiking <- new Activity {aName = "Hiking"}
 
-  addToRelation existingActivity universe poker
-  addToRelation existingActivity universe hiking
+  addRelated existingActivity universe poker
+  addRelated existingActivity universe hiking
 
   deckOfCards <- new Object {oName = "Deck of Cards"}
   pokerChips <- new Object {oName = "Poker Chips"}
   trekkingPoles <- new Object {oName = "Trekking Poles"}
   trailMap <- new Object {oName = "Trail Map"}
 
-  addToRelation existingObject universe deckOfCards
-  addToRelation existingObject universe pokerChips
-  addToRelation existingObject universe trekkingPoles
-  addToRelation existingObject universe trailMap
+  addRelated existingObject universe deckOfCards
+  addRelated existingObject universe pokerChips
+  addRelated existingObject universe trekkingPoles
+  addRelated existingObject universe trailMap
 
-  addToRelation spouse bob jane
+  addRelated spouse bob jane
 
-  addToRelation friend bob jane
-  addToRelation friend bob jose
+  addRelated friend bob jane
+  addRelated friend bob jose
 
-  addToRelation hobby bob poker
-  addToRelation hobby bob hiking
+  addRelated hobby bob poker
+  addRelated hobby bob hiking
 
-  addToRelation posession jane deckOfCards
-  addToRelation posession jose trekkingPoles
+  addRelated posession jane deckOfCards
+  addRelated posession jose trekkingPoles
 
-  addToRelation tool poker deckOfCards
-  addToRelation tool poker pokerChips
-  addToRelation tool hiking trekkingPoles
-  addToRelation tool hiking trailMap
+  addRelated tool poker deckOfCards
+  addRelated tool poker pokerChips
+  addRelated tool hiking trekkingPoles
+  addRelated tool hiking trailMap
 
   return universe
 
@@ -160,7 +160,9 @@ main = do
     -- We want to know the names of tools that are needed for Bob's hobbies,
     -- but are not owned by any of Bob's friends.
     bobs <- peopleByName universe "Bob"
-    let [bob] = bobs
+    let bob = case bobs of
+          [x] -> x
+          _ -> error "Wrong number of bobs"
     todo <- getRelated hobby bob
     needed <- concatMapM (getRelated tool) todo
     friends <- getRelated friend bob

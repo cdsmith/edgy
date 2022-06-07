@@ -26,10 +26,11 @@ module Schema
     getAttr,
     setAttr,
     getRelated,
-    addToRelation,
-    removeFromRelation,
-    setRelation,
-    clearRelation,
+    isRelated,
+    setRelated,
+    addRelated,
+    removeRelated,
+    clearRelated,
   )
 where
 
@@ -126,14 +127,23 @@ data Relation where
   Existence :: Type -> Relation
 
 type Related :: Schema -> Relation -> Constraint
-class Related schema relation where
+class
+  ( Typeable schema,
+    Typeable relation,
+    Typeable (Domain schema relation),
+    Typeable (Codomain schema relation),
+    KnownCardinality (DomainCardinality schema relation),
+    KnownCardinality (CodomainCardinality schema relation)
+  ) =>
+  Related schema relation
+  where
   type Domain schema relation :: NodeType
   type Codomain schema relation :: NodeType
   type DomainCardinality schema relation :: Cardinality
   type CodomainCardinality schema relation :: Cardinality
 
 instance
-  Related schema (NamedRelation name) =>
+  (Typeable schema, KnownSymbol name, Related schema (NamedRelation name)) =>
   Related schema (Inverse name)
   where
   type Domain schema (Inverse name) = Codomain schema (NamedRelation name)
@@ -145,15 +155,22 @@ instance
     CodomainCardinality schema (Inverse name) =
       DomainCardinality schema (NamedRelation name)
 
-instance forall schema a. Related schema (Existence a) where
+instance (Typeable schema, Typeable a) => Related schema (Existence a) where
   type Domain schema (Existence a) = Universe
   type Codomain schema (Existence a) = DataNode a
   type DomainCardinality schema (Existence a) = One
   type CodomainCardinality schema (Existence a) = Many
 
 instance
-  forall schema name.
-  IsFound (LookupRelation schema name) ~ True =>
+  ( Typeable schema,
+    KnownSymbol name,
+    IsFound (LookupRelation schema name) ~ True,
+    info ~ LookupValue (LookupRelation schema name),
+    Typeable (NamedRelationInfo_Domain info),
+    Typeable (NamedRelationInfo_Codomain info),
+    KnownCardinality (NamedRelationInfo_DomainCardinality info),
+    KnownCardinality (NamedRelationInfo_CodomainCardinality info)
+  ) =>
   Related schema (NamedRelation name)
   where
   type
@@ -172,11 +189,19 @@ instance
         (LookupValue (LookupRelation schema name))
 
 type Attribute :: Schema -> NodeType -> Symbol -> Constraint
-class Attribute schema nodeType attrName where
+class
+  (Typeable schema, Typeable nodeType, KnownSymbol attrName, Binary (ValueType schema nodeType attrName)) =>
+  Attribute schema nodeType attrName
+  where
   type ValueType schema nodeType attrName :: Type
 
 instance
-  IsFound (LookupAttr schema nodeType attrName) ~ True =>
+  ( Typeable schema,
+    Typeable nodeType,
+    KnownSymbol attrName,
+    IsFound (LookupAttr schema nodeType attrName) ~ True,
+    Binary (LookupValue (LookupAttr schema nodeType attrName))
+  ) =>
   Attribute schema nodeType attrName
   where
   type
@@ -197,7 +222,7 @@ instance
 type AttrKey :: Schema -> NodeType -> Type -> Type
 data AttrKey schema nodeType t where
   AttrKey ::
-    Attribute schema nodeType attrName =>
+    (KnownSymbol attrName, Attribute schema nodeType attrName) =>
     TypeRep attrName ->
     AttrKey schema nodeType (ValueType schema nodeType attrName)
 
@@ -224,7 +249,10 @@ data AttrVal schema a where
 
 type RelatedKey :: Schema -> NodeType -> Relation -> Type
 data RelatedKey schema nodeType relation where
-  RelatedKey :: TypeRep relation -> RelatedKey schema nodeType relation
+  RelatedKey ::
+    Typeable relation =>
+    TypeRep relation ->
+    RelatedKey schema nodeType relation
 
 instance Eq (RelatedKey schema nodeType t) where
   RelatedKey a == RelatedKey b = SomeTypeRep a == SomeTypeRep b
@@ -261,20 +289,18 @@ data NodeImpl schema nodeType
 instance Indexable (NodeImpl schema nodeType) where
   key (NodeImpl uuid _ _) = show uuid
 
-instance Serializable (NodeImpl schema nodeType) where
+instance Typeable schema => Serializable (NodeImpl schema nodeType) where
   serialize = Binary.encode
   deserialize = Binary.decode
 
-instance Binary (NodeImpl schema nodeType) where
+instance Typeable schema => Binary (NodeImpl schema nodeType) where
   put (NodeImpl uuid attrs relations) = do
     Binary.put uuid
-    Binary.put attrs
-    Binary.put relations
-  get = NodeImpl <$> Binary.get <*> Binary.get <*> Binary.get
-
-instance Binary (DMap f g) where
-  get = return DMap.empty
-  put _ = return ()
+    Binary.put (DMap.size attrs)
+    DMap.forWithKey_ attrs $ \(AttrKey k) (AttrVal v) -> Binary.put k >> Binary.put v
+    Binary.put (DMap.size relations)
+    DMap.forWithKey_ relations $ \(RelatedKey k) (RelatedVal v) -> Binary.put k >> Binary.put v
+  get = NodeImpl <$> Binary.get <*> pure DMap.empty <*> pure DMap.empty
 
 emptyNodeImpl :: UUID -> NodeImpl schema nodeType
 emptyNodeImpl uuid = NodeImpl uuid DMap.empty DMap.empty
@@ -294,11 +320,7 @@ deleteNode (Node ref) = delDBRef ref
 
 getAttr ::
   forall schema nodeType attrName.
-  ( Typeable schema,
-    Typeable nodeType,
-    KnownSymbol attrName,
-    Attribute schema nodeType attrName
-  ) =>
+  Attribute schema nodeType attrName =>
   Proxy attrName ->
   Node schema nodeType ->
   STM (ValueType schema nodeType attrName)
@@ -313,12 +335,7 @@ getAttr _ (Node ref) = do
 
 setAttr ::
   forall schema nodeType attrName.
-  ( Typeable schema,
-    Typeable nodeType,
-    KnownSymbol attrName,
-    Attribute schema nodeType attrName,
-    Binary (LookupValue (LookupAttr schema nodeType attrName))
-  ) =>
+  Attribute schema nodeType attrName =>
   Proxy attrName ->
   Node schema nodeType ->
   ValueType schema nodeType attrName ->
@@ -341,15 +358,8 @@ setAttr _ (Node ref) value = do
     Nothing -> error "setAttr: node not found"
 
 getRelated ::
-  forall (schema :: Schema) (nodeType :: NodeType) (relation :: Relation) (n :: Cardinality).
-  ( Typeable schema,
-    Typeable relation,
-    Related schema relation,
-    nodeType ~ Domain schema relation,
-    Typeable nodeType,
-    KnownCardinality n,
-    n ~ CodomainCardinality schema relation
-  ) =>
+  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
+  (Related schema relation, n ~ CodomainCardinality schema relation) =>
   Proxy relation ->
   Node schema (Domain schema relation) ->
   STM (Numerous n (Node schema (Codomain schema relation)))
@@ -365,18 +375,50 @@ getRelated _ (Node ref) = do
         Nothing -> error "getRelated: bad cardinality"
     Nothing -> error "getRelated: node not found"
 
-addToRelation ::
+isRelated ::
   forall (schema :: Schema) (relation :: Relation).
-  ( Typeable schema,
-    Typeable relation,
-    Related schema relation,
-    Typeable (Domain schema relation)
-  ) =>
+  Related schema relation =>
+  Proxy relation ->
+  Node schema (Domain schema relation) ->
+  Node schema (Codomain schema relation) ->
+  STM Bool
+isRelated _ (Node ref) target = do
+  nodeImpl <- readDBRef ref
+  case nodeImpl of
+    Just (NodeImpl _ _ relations) ->
+      case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
+        Just (RelatedVal ns) -> return (target `elem` ns)
+        Nothing -> return False
+    Nothing -> error "isRelated: node not found"
+
+setRelated ::
+  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
+  (Related schema relation, n ~ CodomainCardinality schema relation) =>
+  Related schema relation =>
+  Proxy relation ->
+  Node schema (Domain schema relation) ->
+  Numerous n (Node schema (Codomain schema relation)) ->
+  STM ()
+setRelated _ (Node ref) target = do
+  nodeImpl <- readDBRef ref
+  case nodeImpl of
+    Just (NodeImpl uuid attrs relations) ->
+      writeDBRef ref $
+        NodeImpl uuid attrs $
+          DMap.insert
+            (RelatedKey (typeRep :: TypeRep relation))
+            (RelatedVal (fromCardinality (Proxy :: Proxy n) target))
+            relations
+    Nothing -> error "setRelation: node not found"
+
+addRelated ::
+  forall (schema :: Schema) (relation :: Relation).
+  Related schema relation =>
   Proxy relation ->
   Node schema (Domain schema relation) ->
   Node schema (Codomain schema relation) ->
   STM ()
-addToRelation _ (Node ref) target = do
+addRelated _ (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
@@ -391,18 +433,14 @@ addToRelation _ (Node ref) target = do
       writeDBRef ref (NodeImpl uuid attrs relations')
     Nothing -> error "addToRelation: node not found"
 
-removeFromRelation ::
+removeRelated ::
   forall (schema :: Schema) (relation :: Relation).
-  ( Typeable schema,
-    Typeable relation,
-    Related schema relation,
-    Typeable (Domain schema relation)
-  ) =>
+  Related schema relation =>
   Proxy relation ->
   Node schema (Domain schema relation) ->
   Node schema (Codomain schema relation) ->
   STM ()
-removeFromRelation _ (Node ref) target = do
+removeRelated _ (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
@@ -416,43 +454,13 @@ removeFromRelation _ (Node ref) target = do
       writeDBRef ref (NodeImpl uuid attrs relations')
     Nothing -> error "removeFromRelation: node not found"
 
-setRelation ::
-  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
-  ( Typeable schema,
-    Typeable relation,
-    Related schema relation,
-    Typeable (Domain schema relation),
-    KnownCardinality n,
-    n ~ CodomainCardinality schema relation
-  ) =>
+clearRelated ::
+  forall (schema :: Schema) (relation :: Relation).
   Related schema relation =>
   Proxy relation ->
   Node schema (Domain schema relation) ->
-  Numerous n (Node schema (Codomain schema relation)) ->
   STM ()
-setRelation _ (Node ref) target = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) ->
-      writeDBRef ref $
-        NodeImpl uuid attrs $
-          DMap.insert
-            (RelatedKey (typeRep :: TypeRep relation))
-            (RelatedVal (fromCardinality (Proxy :: Proxy n) target))
-            relations
-    Nothing -> error "setRelation: node not found"
-
-clearRelation ::
-  forall (schema :: Schema) (relation :: Relation).
-  ( Typeable schema,
-    Typeable relation,
-    Related schema relation,
-    Typeable (Domain schema relation)
-  ) =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  STM ()
-clearRelation _ (Node ref) = do
+clearRelated _ (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
