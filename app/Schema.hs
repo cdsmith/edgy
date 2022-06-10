@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
@@ -13,460 +14,278 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Schema
-  ( Schema,
-    SchemaDef (..),
+  ( -- * Nodes
     NodeType (..),
-    Relation (..),
-    Related (..),
+
+    -- * Attributes
     Attribute (..),
-    Node,
-    bigBang,
-    newNode,
-    deleteNode,
-    getAttr,
-    setAttr,
-    getRelated,
-    isRelated,
-    setRelated,
-    addRelated,
-    removeRelated,
-    clearRelated,
+    AttributeNode,
+    AttributeType,
+
+    -- * Relations
+    Relation (..),
+    Domain,
+    DomainCardinality,
+    Codomain,
+    CodomainCardinality,
+    Inverse,
+
+    -- * Schema
+    Schema,
+    SchemaDef (..),
+    ValidSchema (..),
+    HasNode,
+    HasRelation,
+    HasAttribute,
+
+    -- * Schema folds
+    AttributeFold,
+    RelationFold,
   )
 where
 
-import Cardinality (Cardinality (..), KnownCardinality (..), Numerous)
-import Control.Concurrent.STM (STM)
+import Cardinality (Cardinality (..), KnownCardinality)
 import Data.Binary (Binary (..))
-import qualified Data.Binary as Binary
-import Data.Dependent.Map (DMap)
-import qualified Data.Dependent.Map as DMap
-import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
-import Data.TCache (DBRef, delDBRef, newDBRef, readDBRef, safeIOToSTM, writeDBRef)
-import Data.TCache.DefaultPersistence (Indexable (..), Serializable (..))
-import Data.Type.Equality ((:~:) (..))
 import Data.Typeable (Typeable)
-import Data.UUID (UUID)
-import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
-import GHC.TypeLits (ErrorMessage (Text), KnownSymbol, Symbol, TypeError)
-import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
+import GHC.TypeLits (ErrorMessage (..), Symbol, TypeError)
 
-type Schema = [SchemaDef]
-
-data SchemaDef where
-  AttrDef :: NodeType -> Symbol -> Type -> SchemaDef
-  RelationDef ::
-    NodeType ->
-    Cardinality ->
-    Symbol ->
-    NodeType ->
-    Cardinality ->
-    SchemaDef
-
-type LookupResult :: forall k. k -> Type
-data LookupResult a where
-  NotFound :: LookupResult a
-  Found :: a -> LookupResult a
-
-type IsFound :: LookupResult k -> Bool
-type family IsFound r where
-  IsFound (Found _) = True
-  IsFound NotFound = False
-
-type LookupValue :: LookupResult k -> k
-type family LookupValue r where
-  LookupValue (Found a) = a
-  LookupValue NotFound = TypeError (Text "LookupValue: NotFound")
-
-type LookupAttr :: Schema -> NodeType -> Symbol -> LookupResult Type
-type family LookupAttr schema nodeType attrName where
-  LookupAttr '[] _ _ = NotFound
-  LookupAttr (AttrDef nodeType attrName t ': rest) nodeType attrName = Found t
-  LookupAttr (_ ': rest) nodeType attrName = LookupAttr rest nodeType attrName
-
-data NamedRelationInfo where
-  NamedRelationInfo ::
-    NodeType ->
-    Cardinality ->
-    NodeType ->
-    Cardinality ->
-    NamedRelationInfo
-
-type NamedRelationInfo_Domain :: NamedRelationInfo -> NodeType
-type family NamedRelationInfo_Domain def where
-  NamedRelationInfo_Domain ('NamedRelationInfo a _ _ _) = a
-
-type NamedRelationInfo_DomainCardinality :: NamedRelationInfo -> Cardinality
-type family NamedRelationInfo_DomainCardinality def where
-  NamedRelationInfo_DomainCardinality ('NamedRelationInfo _ na _ _) = na
-
-type NamedRelationInfo_Codomain :: NamedRelationInfo -> NodeType
-type family NamedRelationInfo_Codomain def where
-  NamedRelationInfo_Codomain ('NamedRelationInfo _ _ b _) = b
-
-type NamedRelationInfo_CodomainCardinality :: NamedRelationInfo -> Cardinality
-type family NamedRelationInfo_CodomainCardinality def where
-  NamedRelationInfo_CodomainCardinality ('NamedRelationInfo _ _ _ nb) = nb
-
-type LookupRelation :: Schema -> Symbol -> LookupResult NamedRelationInfo
-type family LookupRelation schema name where
-  LookupRelation '[] _ = NotFound
-  LookupRelation (RelationDef a na name b nb ': rest) name =
-    Found ('NamedRelationInfo a na b nb)
-  LookupRelation (_ ': rest) name = LookupRelation rest name
-
+-- The kind for node types.  There is exactly one node of the type 'Universe',
+-- as well as any number of 'DataNode' types created by the application.
 data NodeType where
   Universe :: NodeType
   DataNode :: Type -> NodeType
 
+data Attribute where
+  NamedAttribute :: NodeType -> Symbol -> Type -> Attribute
+
+type AttributeNode :: Attribute -> NodeType
+type family AttributeNode attr where
+  AttributeNode (NamedAttribute nodeType _ _) = nodeType
+
+type AttributeType :: Attribute -> Type
+type family AttributeType attr where
+  AttributeType (NamedAttribute _ _ t) = t
+
 data Relation where
-  NamedRelation :: Symbol -> Relation
-  Inverse :: Symbol -> Relation
-  Existence :: Type -> Relation
+  Directed ::
+    NodeType ->
+    Cardinality ->
+    Symbol ->
+    Cardinality ->
+    NodeType ->
+    Relation
+  Symmetric :: NodeType -> Cardinality -> Symbol -> Relation
+  Backward ::
+    NodeType ->
+    Cardinality ->
+    Symbol ->
+    Cardinality ->
+    NodeType ->
+    Relation
+  Existence :: NodeType -> Relation
+  Universal :: NodeType -> Relation
 
-type Related :: Schema -> Relation -> Constraint
+type Domain :: Relation -> NodeType
+type family Domain rel where
+  Domain (Directed a na name nb b) = a
+  Domain (Backward b nb name na a) = b
+  Domain (Symmetric nodeType n name) = nodeType
+  Domain (Existence nodeType) = Universe
+  Domain (Universal nodeType) = nodeType
+
+type DomainCardinality :: Relation -> Cardinality
+type family DomainCardinality rel where
+  DomainCardinality (Directed a na name nb b) = na
+  DomainCardinality (Backward b nb name na a) = nb
+  DomainCardinality (Symmetric nodeType n name) = n
+  DomainCardinality (Existence nodeType) = One
+  DomainCardinality (Universal nodeType) = Many
+
+type Codomain :: Relation -> NodeType
+type family Codomain rel where
+  Codomain (Directed a na name nb b) = b
+  Codomain (Backward b nb name na a) = a
+  Codomain (Symmetric nodeType n name) = nodeType
+  Codomain (Existence nodeType) = nodeType
+  Codomain (Universal nodeType) = Universe
+
+type CodomainCardinality :: Relation -> Cardinality
+type family CodomainCardinality rel where
+  CodomainCardinality (Directed a na name nb b) = nb
+  CodomainCardinality (Backward b nb name na a) = na
+  CodomainCardinality (Symmetric nodeType n name) = n
+  CodomainCardinality (Existence nodeType) = Many
+  CodomainCardinality (Universal nodeType) = One
+
+type Inverse :: Relation -> Relation
+type family Inverse relation where
+  Inverse (Directed a na name nb b) = Backward b nb name na a
+  Inverse (Backward b nb name na a) = Directed a na name nb b
+  Inverse (Symmetric nodeType n name) = Symmetric nodeType n name
+  Inverse (Existence nodeType) = Universal nodeType
+  Inverse (Universal nodeType) = Existence nodeType
+
+-- | The kind for an edgy schema.  An edgy schema is itself a type, specifying
+-- the node types, attributes, and relations that make up the data model.
+type Schema = [SchemaDef]
+
+-- | The kind for a single definition in an edgy schema.
+data SchemaDef where
+  DefNode :: NodeType -> SchemaDef
+  DefAttribute :: Attribute -> SchemaDef
+  DefRelation :: Relation -> SchemaDef
+
+type ValidSchema :: Schema -> Constraint
+class Typeable schema => ValidSchema schema where
+  foldAttributes ::
+    forall nodeType a.
+    Proxy schema ->
+    Proxy nodeType ->
+    AttributeFold nodeType a ->
+    a ->
+    a
+  foldRelations ::
+    forall nodeType a.
+    Proxy schema ->
+    Proxy nodeType ->
+    RelationFold nodeType a ->
+    a ->
+    a
+
+instance ValidSchema '[] where
+  foldAttributes _ _ _ x = x
+  foldRelations _ _ _ x = x
+
+instance
+  (Typeable nodeType, ValidSchema schema) =>
+  ValidSchema (DefNode nodeType : schema)
+  where
+  foldAttributes _ p f x = foldAttributes (Proxy :: Proxy schema) p f x
+  foldRelations _ p f x = foldRelations (Proxy :: Proxy schema) p f x
+
+instance
+  (Typeable relation, Typeable (Codomain relation), ValidSchema schema) =>
+  ValidSchema (DefRelation relation ': schema)
+  where
+  foldAttributes _ p f x = foldAttributes (Proxy :: Proxy schema) p f x
+  foldRelations _ p f x =
+    foldRelations (Proxy :: Proxy schema) p f (f (Proxy :: Proxy relation) x)
+
+instance
+  ( Typeable attr,
+    Binary (AttributeType attr),
+    ValidSchema schema
+  ) =>
+  ValidSchema (DefAttribute attr ': schema)
+  where
+  foldAttributes _ p f x =
+    foldAttributes (Proxy :: Proxy schema) p f (f (Proxy :: Proxy attr) x)
+  foldRelations _ p f x = foldRelations (Proxy :: Proxy schema) p f x
+
+type HasNode :: Schema -> NodeType -> Constraint
+class (ValidSchema schema, Typeable nodeType) => HasNode schema nodeType
+
+instance
+  {-# OVERLAPS #-}
+  (Typeable nodeType, ValidSchema rest) =>
+  HasNode (DefNode nodeType : rest) nodeType
+
+instance
+  {-# OVERLAPPABLE #-}
+  (ValidSchema (def : rest), HasNode rest nodeType) =>
+  HasNode (def : rest) nodeType
+
+instance
+  ( Typeable nodeType,
+    TypeError (Text "Node type missing from schema: " :<>: ShowType nodeType)
+  ) =>
+  HasNode '[] nodeType
+
+type HasAttribute :: Schema -> Attribute -> Constraint
 class
-  ( Typeable schema,
-    Typeable relation,
-    Typeable (Domain schema relation),
-    Typeable (Codomain schema relation),
-    KnownCardinality (DomainCardinality schema relation),
-    KnownCardinality (CodomainCardinality schema relation)
+  ( ValidSchema schema,
+    Typeable attr,
+    Typeable (AttributeNode attr),
+    Typeable (AttributeType attr),
+    Binary (AttributeType attr)
   ) =>
-  Related schema relation
-  where
-  type Domain schema relation :: NodeType
-  type Codomain schema relation :: NodeType
-  type DomainCardinality schema relation :: Cardinality
-  type CodomainCardinality schema relation :: Cardinality
+  HasAttribute schema attr
 
 instance
-  (Typeable schema, KnownSymbol name, Related schema (NamedRelation name)) =>
-  Related schema (Inverse name)
-  where
-  type Domain schema (Inverse name) = Codomain schema (NamedRelation name)
-  type Codomain schema (Inverse name) = Domain schema (NamedRelation name)
-  type
-    DomainCardinality schema (Inverse name) =
-      CodomainCardinality schema (NamedRelation name)
-  type
-    CodomainCardinality schema (Inverse name) =
-      DomainCardinality schema (NamedRelation name)
-
-instance (Typeable schema, Typeable a) => Related schema (Existence a) where
-  type Domain schema (Existence a) = Universe
-  type Codomain schema (Existence a) = DataNode a
-  type DomainCardinality schema (Existence a) = One
-  type CodomainCardinality schema (Existence a) = Many
+  {-# OVERLAPS #-}
+  ( Typeable attr,
+    Typeable (AttributeNode attr),
+    Typeable (AttributeType attr),
+    Binary (AttributeType attr),
+    ValidSchema rest
+  ) =>
+  HasAttribute (DefAttribute attr : rest) attr
 
 instance
-  ( Typeable schema,
-    KnownSymbol name,
-    IsFound (LookupRelation schema name) ~ True,
-    info ~ LookupValue (LookupRelation schema name),
-    Typeable (NamedRelationInfo_Domain info),
-    Typeable (NamedRelationInfo_Codomain info),
-    KnownCardinality (NamedRelationInfo_DomainCardinality info),
-    KnownCardinality (NamedRelationInfo_CodomainCardinality info)
-  ) =>
-  Related schema (NamedRelation name)
-  where
-  type
-    Domain schema (NamedRelation name) =
-      NamedRelationInfo_Domain (LookupValue (LookupRelation schema name))
-  type
-    Codomain schema (NamedRelation name) =
-      NamedRelationInfo_Codomain (LookupValue (LookupRelation schema name))
-  type
-    DomainCardinality schema (NamedRelation name) =
-      NamedRelationInfo_DomainCardinality
-        (LookupValue (LookupRelation schema name))
-  type
-    CodomainCardinality schema (NamedRelation name) =
-      NamedRelationInfo_CodomainCardinality
-        (LookupValue (LookupRelation schema name))
+  {-# OVERLAPPABLE #-}
+  (ValidSchema (def : rest), HasAttribute rest attr) =>
+  HasAttribute (def : rest) attr
 
-type Attribute :: Schema -> NodeType -> Symbol -> Constraint
+instance
+  ( Typeable attr,
+    Typeable (AttributeNode attr),
+    Typeable (AttributeType attr),
+    Binary (AttributeType attr),
+    TypeError (Text "Attribute missing from schema: " :<>: ShowType attr)
+  ) =>
+  HasAttribute '[] attr
+
+type HasRelation :: Schema -> Relation -> Constraint
 class
-  (Typeable schema, Typeable nodeType, KnownSymbol attrName, Binary (ValueType schema nodeType attrName)) =>
-  Attribute schema nodeType attrName
-  where
-  type ValueType schema nodeType attrName :: Type
-
-instance
-  ( Typeable schema,
-    Typeable nodeType,
-    KnownSymbol attrName,
-    IsFound (LookupAttr schema nodeType attrName) ~ True,
-    Binary (LookupValue (LookupAttr schema nodeType attrName))
+  ( ValidSchema schema,
+    Typeable rel,
+    Typeable (Domain rel),
+    KnownCardinality (DomainCardinality rel),
+    Typeable (Codomain rel),
+    KnownCardinality (CodomainCardinality rel)
   ) =>
-  Attribute schema nodeType attrName
-  where
-  type
-    ValueType schema nodeType attrName =
-      LookupValue (LookupAttr schema nodeType attrName)
-
-type Node :: Schema -> NodeType -> Type
-newtype Node schema nodeType = Node (DBRef (NodeImpl schema nodeType))
-  deriving (Eq, Ord)
+  HasRelation schema rel
 
 instance
-  (Typeable schema, Typeable nodeType) =>
-  Binary (Node schema nodeType)
-  where
-  put (Node ref) = put (show ref)
-  get = Node . read <$> get
+  {-# OVERLAPS #-}
+  ( Typeable rel,
+    Typeable (Domain rel),
+    KnownCardinality (DomainCardinality rel),
+    Typeable (Codomain rel),
+    KnownCardinality (CodomainCardinality rel),
+    ValidSchema rest
+  ) =>
+  HasRelation (DefRelation rel : rest) rel
 
-type AttrKey :: Schema -> NodeType -> Type -> Type
-data AttrKey schema nodeType t where
-  AttrKey ::
-    (KnownSymbol attrName, Attribute schema nodeType attrName) =>
-    TypeRep attrName ->
-    AttrKey schema nodeType (ValueType schema nodeType attrName)
+instance
+  {-# OVERLAPPABLE #-}
+  (ValidSchema (def : rest), HasRelation rest rel) =>
+  HasRelation (def : rest) rel
 
-instance Eq (AttrKey schema nodeType t) where
-  AttrKey a == AttrKey b = SomeTypeRep a == SomeTypeRep b
+instance
+  ( Typeable rel,
+    Typeable (Domain rel),
+    KnownCardinality (DomainCardinality rel),
+    Typeable (Codomain rel),
+    KnownCardinality (CodomainCardinality rel),
+    TypeError (Text "Relation missing from schema: " :<>: ShowType rel)
+  ) =>
+  HasRelation '[] rel
 
-instance Ord (AttrKey schema nodeType t) where
-  compare (AttrKey a) (AttrKey b) = compare (SomeTypeRep a) (SomeTypeRep b)
+type AttributeFold :: NodeType -> Type -> Type
+type AttributeFold nodeType a =
+  forall (attr :: Attribute).
+  (Typeable attr, Binary (AttributeType attr)) =>
+  Proxy attr ->
+  a ->
+  a
 
-instance GEq (AttrKey schema nodeType) where
-  geq (AttrKey a) (AttrKey b) = case geq a b of
-    Just Refl -> Just Refl
-    Nothing -> Nothing
-
-instance GCompare (AttrKey schema nodeType) where
-  gcompare (AttrKey a) (AttrKey b) = case gcompare a b of
-    GLT -> GLT
-    GEQ -> GEQ
-    GGT -> GGT
-
-type AttrVal :: Schema -> Type -> Type
-data AttrVal schema a where
-  AttrVal :: Binary a => a -> AttrVal schema a
-
-type RelatedKey :: Schema -> NodeType -> Relation -> Type
-data RelatedKey schema nodeType relation where
-  RelatedKey ::
-    Typeable relation =>
-    TypeRep relation ->
-    RelatedKey schema nodeType relation
-
-instance Eq (RelatedKey schema nodeType t) where
-  RelatedKey a == RelatedKey b = SomeTypeRep a == SomeTypeRep b
-
-instance Ord (RelatedKey schema nodeType t) where
-  compare (RelatedKey a) (RelatedKey b) =
-    compare (SomeTypeRep a) (SomeTypeRep b)
-
-instance GEq (RelatedKey schema nodeType) where
-  geq (RelatedKey a) (RelatedKey b) = case geq a b of
-    Just Refl -> Just Refl
-    Nothing -> Nothing
-
-instance GCompare (RelatedKey schema nodeType) where
-  gcompare (RelatedKey a) (RelatedKey b) = case gcompare a b of
-    GLT -> GLT
-    GEQ -> GEQ
-    GGT -> GGT
-
-type RelatedVal :: Schema -> Relation -> Type
-data RelatedVal schema relation where
-  RelatedVal ::
-    Related schema relation =>
-    [Node schema (Codomain schema relation)] ->
-    RelatedVal schema relation
-
-type NodeImpl :: Schema -> NodeType -> Type
-data NodeImpl schema nodeType
-  = NodeImpl
-      UUID
-      (DMap (AttrKey schema nodeType) (AttrVal schema))
-      (DMap (RelatedKey schema nodeType) (RelatedVal schema))
-
-instance Indexable (NodeImpl schema nodeType) where
-  key (NodeImpl uuid _ _) = show uuid
-
-instance Typeable schema => Serializable (NodeImpl schema nodeType) where
-  serialize = Binary.encode
-  deserialize = Binary.decode
-
-instance Typeable schema => Binary (NodeImpl schema nodeType) where
-  put (NodeImpl uuid attrs relations) = do
-    Binary.put uuid
-    Binary.put (DMap.size attrs)
-    DMap.forWithKey_ attrs $ \(AttrKey k) (AttrVal v) -> Binary.put k >> Binary.put v
-    Binary.put (DMap.size relations)
-    DMap.forWithKey_ relations $ \(RelatedKey k) (RelatedVal v) -> Binary.put k >> Binary.put v
-  get = NodeImpl <$> Binary.get <*> pure DMap.empty <*> pure DMap.empty
-
-emptyNodeImpl :: UUID -> NodeImpl schema nodeType
-emptyNodeImpl uuid = NodeImpl uuid DMap.empty DMap.empty
-
-bigBang :: Typeable schema => STM (Node schema Universe)
-bigBang = do
-  Node <$> newDBRef (emptyNodeImpl UUID.nil)
-
-newNode :: (Typeable schema, Typeable a) => STM (Node schema (DataNode a))
-newNode = do
-  uuid <- safeIOToSTM UUID.nextRandom
-  Node <$> newDBRef (emptyNodeImpl uuid)
-
-deleteNode ::
-  (Typeable schema, Typeable a) => Node schema (DataNode a) -> STM ()
-deleteNode (Node ref) = delDBRef ref
-
-getAttr ::
-  forall schema nodeType attrName.
-  Attribute schema nodeType attrName =>
-  Proxy attrName ->
-  Node schema nodeType ->
-  STM (ValueType schema nodeType attrName)
-getAttr _ (Node ref) = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl _ attrs _) ->
-      case DMap.lookup (AttrKey (typeRep :: TypeRep attrName)) attrs of
-        Just (AttrVal val) -> return val
-        Nothing -> error "getAttr: attr not found"
-    Nothing -> error "getAttr: node not found"
-
-setAttr ::
-  forall schema nodeType attrName.
-  Attribute schema nodeType attrName =>
-  Proxy attrName ->
-  Node schema nodeType ->
-  ValueType schema nodeType attrName ->
-  STM ()
-setAttr _ (Node ref) value = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) ->
-      writeDBRef
-        ref
-        ( NodeImpl
-            uuid
-            ( DMap.insert
-                (AttrKey (typeRep :: TypeRep attrName))
-                (AttrVal value)
-                attrs
-            )
-            relations
-        )
-    Nothing -> error "setAttr: node not found"
-
-getRelated ::
-  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
-  (Related schema relation, n ~ CodomainCardinality schema relation) =>
+type RelationFold :: NodeType -> Type -> Type
+type RelationFold nodeType a =
+  forall (relation :: Relation).
+  (Typeable relation, Typeable (Codomain relation)) =>
   Proxy relation ->
-  Node schema (Domain schema relation) ->
-  STM (Numerous n (Node schema (Codomain schema relation)))
-getRelated _ (Node ref) = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl _ _ relations) -> do
-      let nodes = case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
-            Just (RelatedVal ns) -> ns
-            Nothing -> []
-      case toCardinality (Proxy :: Proxy n) nodes of
-        Just result -> return result
-        Nothing -> error "getRelated: bad cardinality"
-    Nothing -> error "getRelated: node not found"
-
-isRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  Related schema relation =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  Node schema (Codomain schema relation) ->
-  STM Bool
-isRelated _ (Node ref) target = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl _ _ relations) ->
-      case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
-        Just (RelatedVal ns) -> return (target `elem` ns)
-        Nothing -> return False
-    Nothing -> error "isRelated: node not found"
-
-setRelated ::
-  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
-  (Related schema relation, n ~ CodomainCardinality schema relation) =>
-  Related schema relation =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  Numerous n (Node schema (Codomain schema relation)) ->
-  STM ()
-setRelated _ (Node ref) target = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) ->
-      writeDBRef ref $
-        NodeImpl uuid attrs $
-          DMap.insert
-            (RelatedKey (typeRep :: TypeRep relation))
-            (RelatedVal (fromCardinality (Proxy :: Proxy n) target))
-            relations
-    Nothing -> error "setRelation: node not found"
-
-addRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  Related schema relation =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  Node schema (Codomain schema relation) ->
-  STM ()
-addRelated _ (Node ref) target = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) -> do
-      let relatedKey =
-            RelatedKey
-              (typeRep :: TypeRep relation)
-          relations' = case DMap.lookup relatedKey relations of
-            Just (RelatedVal targets) ->
-              DMap.insert relatedKey (RelatedVal (target : targets)) relations
-            Nothing ->
-              DMap.insert relatedKey (RelatedVal [target]) relations
-      writeDBRef ref (NodeImpl uuid attrs relations')
-    Nothing -> error "addToRelation: node not found"
-
-removeRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  Related schema relation =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  Node schema (Codomain schema relation) ->
-  STM ()
-removeRelated _ (Node ref) target = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) -> do
-      let relatedKey =
-            RelatedKey
-              (typeRep :: TypeRep relation)
-          relations' = case DMap.lookup relatedKey relations of
-            Just (RelatedVal targets) ->
-              DMap.insert relatedKey (RelatedVal (filter (/= target) targets)) relations
-            Nothing -> relations
-      writeDBRef ref (NodeImpl uuid attrs relations')
-    Nothing -> error "removeFromRelation: node not found"
-
-clearRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  Related schema relation =>
-  Proxy relation ->
-  Node schema (Domain schema relation) ->
-  STM ()
-clearRelated _ (Node ref) = do
-  nodeImpl <- readDBRef ref
-  case nodeImpl of
-    Just (NodeImpl uuid attrs relations) -> do
-      let relatedKey =
-            RelatedKey
-              (typeRep :: TypeRep relation)
-          relations' = DMap.insert relatedKey (RelatedVal []) relations
-      writeDBRef ref (NodeImpl uuid attrs relations')
-    Nothing -> error "clearRelation: node not found"
+  a ->
+  a

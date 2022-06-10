@@ -14,6 +14,7 @@ import Data.Kind (Constraint, Type)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Proxy (Proxy)
+import Data.Typeable (Typeable)
 
 data Cardinality = Optional | One | Many | Some
 
@@ -37,7 +38,7 @@ type family Numerous c t where
   Numerous Some t = NonEmpty t
 
 type KnownCardinality :: Cardinality -> Constraint
-class KnownCardinality c where
+class Typeable c => KnownCardinality c where
   toCardinality :: Proxy c -> [a] -> Maybe (Numerous c a)
   fromCardinality :: Proxy c -> Numerous c a -> [a]
 

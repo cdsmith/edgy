@@ -1,32 +1,41 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module Main where
 
 import Cardinality (Cardinality (..))
-import Control.Concurrent.STM (STM, atomically)
-import Control.Monad (filterM, (<=<))
+import Control.Concurrent.STM (STM)
+import Control.Monad (filterM)
 import Control.Monad.Extra (concatMapM)
+import Data.Foldable (traverse_)
 import Data.List ((\\))
 import Data.Proxy (Proxy (..))
-import Data.TCache (syncCache)
-import Data.Typeable (Typeable)
-import Schema
+import Data.TCache (atomicallySync)
+import Node
   ( Node,
-    NodeType (..),
-    Relation (..),
-    SchemaDef (..),
     addRelated,
     bigBang,
-    getAttr,
+    getAttribute,
     getRelated,
     newNode,
-    setAttr,
+    setAttribute,
   )
+import Schema
+  ( Attribute (..),
+    HasNode,
+    NodeType (..),
+    Relation (..),
+    Schema,
+    SchemaDef (..),
+  )
+import System.Environment (getArgs)
 
-class (Typeable schema, Typeable record) => IsNode schema record where
+class HasNode schema (DataNode record) => IsNode schema record where
   get :: Node schema (DataNode record) -> STM record
   set :: Node schema (DataNode record) -> record -> STM ()
 
@@ -36,74 +45,76 @@ class (Typeable schema, Typeable record) => IsNode schema record where
     set node record
     return node
 
-data Person = Person {pName :: String, age :: Int} deriving (Show)
+data Person = Person
+  { pName :: String,
+    age :: Int
+  }
+  deriving (Show)
 
-data Activity = Activity {aName :: String} deriving (Show)
+data Activity = Activity
+  { aName :: String
+  }
+  deriving (Show)
 
-data Object = Object {oName :: String} deriving (Show)
+data Object = Object
+  { oName :: String
+  }
+  deriving (Show)
 
+type PersonNameAttr = NamedAttribute (DataNode Person) "name" String
+
+type PersonAgeAttr = NamedAttribute (DataNode Person) "age" Int
+
+type ActivityNameAttr = NamedAttribute (DataNode Activity) "name" String
+
+type ObjectNameAttr = NamedAttribute (DataNode Object) "name" String
+
+type SpouseRelation = Symmetric (DataNode Person) One "spouse"
+
+type FriendRelation = Directed (DataNode Person) Many "friend" Many (DataNode Person)
+
+type HobbyRelation = Directed (DataNode Person) Many "hobby" Many (DataNode Activity)
+
+type PossessionRelation = Directed (DataNode Person) One "possession" Many (DataNode Object)
+
+type ToolRelation = Directed (DataNode Activity) Many "tool" Many (DataNode Object)
+
+type MySchema :: Schema
 type MySchema =
-  '[ AttrDef (DataNode Person) "pName" String,
-     AttrDef (DataNode Person) "age" Int,
-     AttrDef (DataNode Activity) "aName" String,
-     AttrDef (DataNode Object) "oName" String,
-     RelationDef (DataNode Person) One "spouse" (DataNode Person) One,
-     RelationDef (DataNode Person) Many "friend" (DataNode Person) Many,
-     RelationDef (DataNode Person) Many "hobby" (DataNode Activity) Many,
-     RelationDef (DataNode Person) One "posession" (DataNode Object) Many,
-     RelationDef (DataNode Activity) Many "tool" (DataNode Object) Many
+  '[ DefNode (DataNode Person),
+     DefAttribute PersonNameAttr,
+     DefAttribute PersonAgeAttr,
+     DefRelation (Existence (DataNode Person)),
+     DefRelation SpouseRelation,
+     DefRelation FriendRelation,
+     DefNode (DataNode Activity),
+     DefAttribute ActivityNameAttr,
+     DefRelation (Existence (DataNode Activity)),
+     DefRelation HobbyRelation,
+     DefNode (DataNode Object),
+     DefAttribute ObjectNameAttr,
+     DefRelation (Existence (DataNode Object)),
+     DefRelation PossessionRelation,
+     DefRelation ToolRelation
    ]
 
-personName :: Proxy "pName"
-personName = Proxy
-
-personAge :: Proxy "age"
-personAge = Proxy
-
 instance IsNode MySchema Person where
-  get node = Person <$> getAttr personName node <*> getAttr personAge node
+  get node =
+    Person
+      <$> getAttribute (Proxy :: Proxy PersonNameAttr) node
+      <*> getAttribute (Proxy :: Proxy PersonAgeAttr) node
 
   set node p = do
-    setAttr personName node (pName p)
-    setAttr personAge node (age p)
-
-activityName :: Proxy "aName"
-activityName = Proxy
+    setAttribute (Proxy :: Proxy PersonNameAttr) node (pName p)
+    setAttribute (Proxy :: Proxy PersonAgeAttr) node (age p)
 
 instance IsNode MySchema Activity where
-  get node = Activity <$> getAttr activityName node
-  set node a = setAttr activityName node (aName a)
-
-objectName :: Proxy "oName"
-objectName = Proxy
+  get node = Activity <$> getAttribute (Proxy :: Proxy ActivityNameAttr) node
+  set node a = setAttribute (Proxy :: Proxy ActivityNameAttr) node (aName a)
 
 instance IsNode MySchema Object where
-  get node = Object <$> getAttr objectName node
-  set node o = setAttr objectName node (oName o)
-
-existingPerson :: Proxy (Existence Person)
-existingPerson = Proxy
-
-existingActivity :: Proxy (Existence Activity)
-existingActivity = Proxy
-
-existingObject :: Proxy (Existence Object)
-existingObject = Proxy
-
-spouse :: Proxy (NamedRelation "spouse")
-spouse = Proxy
-
-friend :: Proxy (NamedRelation "friend")
-friend = Proxy
-
-hobby :: Proxy (NamedRelation "hobby")
-hobby = Proxy
-
-posession :: Proxy (NamedRelation "posession")
-posession = Proxy
-
-tool :: Proxy (NamedRelation "tool")
-tool = Proxy
+  get node = Object <$> getAttribute (Proxy :: Proxy ObjectNameAttr) node
+  set node o = setAttribute (Proxy :: Proxy ObjectNameAttr) node (oName o)
 
 makeUniverse :: STM (Node MySchema Universe)
 makeUniverse = do
@@ -113,70 +124,88 @@ makeUniverse = do
   jane <- new Person {pName = "Jane", age = 21}
   jose <- new Person {pName = "Jose", age = 22}
 
-  addRelated existingPerson universe bob
-  addRelated existingPerson universe jane
-  addRelated existingPerson universe jose
+  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe bob
+  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe jane
+  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe jose
 
   poker <- new Activity {aName = "Poker"}
   hiking <- new Activity {aName = "Hiking"}
 
-  addRelated existingActivity universe poker
-  addRelated existingActivity universe hiking
+  addRelated (Proxy :: Proxy (Existence (DataNode Activity))) universe poker
+  addRelated (Proxy :: Proxy (Existence (DataNode Activity))) universe hiking
 
   deckOfCards <- new Object {oName = "Deck of Cards"}
   pokerChips <- new Object {oName = "Poker Chips"}
   trekkingPoles <- new Object {oName = "Trekking Poles"}
   trailMap <- new Object {oName = "Trail Map"}
 
-  addRelated existingObject universe deckOfCards
-  addRelated existingObject universe pokerChips
-  addRelated existingObject universe trekkingPoles
-  addRelated existingObject universe trailMap
+  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe deckOfCards
+  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe pokerChips
+  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe trekkingPoles
+  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe trailMap
 
-  addRelated spouse bob jane
+  addRelated (Proxy :: Proxy SpouseRelation) bob jane
 
-  addRelated friend bob jane
-  addRelated friend bob jose
+  addRelated (Proxy :: Proxy FriendRelation) bob jane
+  addRelated (Proxy :: Proxy FriendRelation) bob jose
+  addRelated (Proxy :: Proxy FriendRelation) jose bob
+  addRelated (Proxy :: Proxy FriendRelation) jane jose
 
-  addRelated hobby bob poker
-  addRelated hobby bob hiking
+  addRelated (Proxy :: Proxy HobbyRelation) bob poker
+  addRelated (Proxy :: Proxy HobbyRelation) bob hiking
+  addRelated (Proxy :: Proxy HobbyRelation) jane poker
+  addRelated (Proxy :: Proxy HobbyRelation) jose hiking
 
-  addRelated posession jane deckOfCards
-  addRelated posession jose trekkingPoles
+  addRelated (Proxy :: Proxy PossessionRelation) bob trailMap
+  addRelated (Proxy :: Proxy PossessionRelation) jane deckOfCards
+  addRelated (Proxy :: Proxy PossessionRelation) jose trekkingPoles
 
-  addRelated tool poker deckOfCards
-  addRelated tool poker pokerChips
-  addRelated tool hiking trekkingPoles
-  addRelated tool hiking trailMap
+  addRelated (Proxy :: Proxy ToolRelation) poker deckOfCards
+  addRelated (Proxy :: Proxy ToolRelation) poker pokerChips
+  addRelated (Proxy :: Proxy ToolRelation) hiking trekkingPoles
+  addRelated (Proxy :: Proxy ToolRelation) hiking trailMap
 
   return universe
+
+lookupPerson ::
+  Node MySchema Universe ->
+  String ->
+  STM (Node MySchema (DataNode Person))
+lookupPerson universe name = do
+  people <- getRelated (Proxy :: Proxy (Existence (DataNode Person))) universe
+  matches <- filterM (fmap ((== name) . pName) . get) people
+  case matches of
+    [person] -> return person
+    [] -> error $ "No person named " ++ name
+    _ -> error $ "Multiple people named " ++ name
+
+missingTools ::
+  Node MySchema (DataNode Person) ->
+  STM [Node MySchema (DataNode Object)]
+missingTools person = do
+  todo <- getRelated (Proxy :: Proxy HobbyRelation) person
+  needed <- concatMapM (getRelated (Proxy :: Proxy ToolRelation)) todo
+  friends <- getRelated (Proxy :: Proxy FriendRelation) person
+  available <-
+    (++)
+      <$> concatMapM
+        (getRelated (Proxy :: Proxy PossessionRelation))
+        friends
+      <*> getRelated (Proxy :: Proxy PossessionRelation) person
+  return (needed \\ available)
 
 ----------------------------------------
 
 main :: IO ()
-main = do
-  universe <- atomically makeUniverse
-  toolNames <- atomically $ do
-    -- We want to know the names of tools that are needed for Bob's hobbies,
-    -- but are not owned by any of Bob's friends.
-    bobs <- peopleByName universe "Bob"
-    let bob = case bobs of
-          [x] -> x
-          _ -> error "Wrong number of bobs"
-    todo <- getRelated hobby bob
-    needed <- concatMapM (getRelated tool) todo
-    friends <- getRelated friend bob
-    available <- concatMapM (getRelated posession) friends
-    let missing = needed \\ available
-    mapM (getAttr objectName) missing
-  putStrLn "Bob should buy:"
-  mapM_ putStrLn toolNames
-  syncCache
-
-peopleByName ::
-  Node MySchema Universe ->
-  String ->
-  STM [Node MySchema (DataNode Person)]
-peopleByName universe name =
-  filterM (return . (== name) . pName <=< get)
-    =<< getRelated existingPerson universe
+main =
+  getArgs >>= \case
+    ["create"] -> atomicallySync makeUniverse >> return ()
+    ["query", name] -> do
+      missingNames <- atomicallySync $ do
+        universe <- bigBang
+        bob <- lookupPerson universe name
+        missing <- missingTools bob
+        traverse (getAttribute (Proxy :: Proxy ObjectNameAttr)) missing
+      putStrLn $ name ++ " is missing:"
+      traverse_ putStrLn missingNames
+    _ -> putStrLn "Usage: main [create|query]"
