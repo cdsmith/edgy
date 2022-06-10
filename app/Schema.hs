@@ -139,18 +139,8 @@ data SchemaDef where
 
 type ValidSchema :: Schema -> Constraint
 class Typeable schema => ValidSchema schema where
-  foldAttributes ::
-    forall a.
-    Proxy schema ->
-    AttributeFold a ->
-    a ->
-    a
-  foldRelations ::
-    forall a.
-    Proxy schema ->
-    RelationFold a ->
-    a ->
-    a
+  foldAttributes :: Proxy schema -> AttributeFold a -> a -> a
+  foldRelations :: Proxy schema -> RelationFold a -> a -> a
 
 instance ValidSchema '[] where
   foldAttributes _ _ x = x
