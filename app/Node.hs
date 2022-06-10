@@ -51,7 +51,7 @@ import Schema
     NodeType (..),
     Relation,
     Schema,
-    ValidSchema (..),
+    KnownSchema (..),
   )
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 import Type.Reflection.Unsafe (typeRepFingerprint)
@@ -61,7 +61,7 @@ newtype Node schema nodeType = Node (DBRef (NodeImpl schema nodeType))
   deriving (Eq, Ord)
 
 instance
-  (ValidSchema schema, Typeable nodeType) =>
+  (KnownSchema schema, Typeable nodeType) =>
   Binary (Node schema nodeType)
   where
   put (Node ref) = put (show ref)
@@ -135,7 +135,7 @@ data RelatedVal schema relation where
     RelatedVal schema relation
 
 instance
-  (ValidSchema schema, Typeable (Codomain relation)) =>
+  (KnownSchema schema, Typeable (Codomain relation)) =>
   Binary (RelatedVal schema relation)
   where
   put (RelatedVal ns) = put ns
@@ -151,12 +151,12 @@ data NodeImpl schema nodeType
 instance Indexable (NodeImpl schema nodeType) where
   key (NodeImpl uuid _ _) = show uuid
 
-instance ValidSchema schema => Serializable (NodeImpl schema nodeType) where
+instance KnownSchema schema => Serializable (NodeImpl schema nodeType) where
   serialize = Binary.encode
   deserialize = Binary.decode
 
 instance
-  ValidSchema schema =>
+  KnownSchema schema =>
   Binary (NodeImpl schema nodeType)
   where
   put (NodeImpl uuid attrs relations) = do
@@ -216,7 +216,7 @@ instance
 emptyNodeImpl :: UUID -> NodeImpl schema nodeType
 emptyNodeImpl uuid = NodeImpl uuid DMap.empty DMap.empty
 
-bigBang :: ValidSchema schema => STM (Node schema Universe)
+bigBang :: KnownSchema schema => STM (Node schema Universe)
 bigBang = do
   let ref = getDBRef (show UUID.nil)
   readDBRef ref >>= \case

@@ -33,7 +33,7 @@ module Schema
     -- * Schema
     Schema,
     SchemaDef (..),
-    ValidSchema (..),
+    KnownSchema (..),
     HasNode,
     HasRelation,
     HasAttribute,
@@ -137,25 +137,25 @@ data SchemaDef where
   DefAttribute :: Attribute -> SchemaDef
   DefRelation :: Relation -> SchemaDef
 
-type ValidSchema :: Schema -> Constraint
-class Typeable schema => ValidSchema schema where
+type KnownSchema :: Schema -> Constraint
+class Typeable schema => KnownSchema schema where
   foldAttributes :: Proxy schema -> AttributeFold a -> a -> a
   foldRelations :: Proxy schema -> RelationFold a -> a -> a
 
-instance ValidSchema '[] where
+instance KnownSchema '[] where
   foldAttributes _ _ x = x
   foldRelations _ _ x = x
 
 instance
-  (Typeable nodeType, ValidSchema schema) =>
-  ValidSchema (DefNode nodeType : schema)
+  (Typeable nodeType, KnownSchema schema) =>
+  KnownSchema (DefNode nodeType : schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
   foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
 
 instance
-  (Typeable relation, Typeable (Codomain relation), ValidSchema schema) =>
-  ValidSchema (DefRelation relation ': schema)
+  (Typeable relation, Typeable (Codomain relation), KnownSchema schema) =>
+  KnownSchema (DefRelation relation ': schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
   foldRelations _ f x =
@@ -164,25 +164,25 @@ instance
 instance
   ( Typeable attr,
     Binary (AttributeType attr),
-    ValidSchema schema
+    KnownSchema schema
   ) =>
-  ValidSchema (DefAttribute attr ': schema)
+  KnownSchema (DefAttribute attr ': schema)
   where
   foldAttributes _ f x =
     foldAttributes (Proxy :: Proxy schema) f (f (Proxy :: Proxy attr) x)
   foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
 
 type HasNode :: Schema -> NodeType -> Constraint
-class (ValidSchema schema, Typeable nodeType) => HasNode schema nodeType
+class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
 
 instance
   {-# OVERLAPS #-}
-  (Typeable nodeType, ValidSchema rest) =>
+  (Typeable nodeType, KnownSchema rest) =>
   HasNode (DefNode nodeType : rest) nodeType
 
 instance
   {-# OVERLAPPABLE #-}
-  (ValidSchema (def : rest), HasNode rest nodeType) =>
+  (KnownSchema (def : rest), HasNode rest nodeType) =>
   HasNode (def : rest) nodeType
 
 instance
@@ -193,7 +193,7 @@ instance
 
 type HasAttribute :: Schema -> Attribute -> Constraint
 class
-  ( ValidSchema schema,
+  ( KnownSchema schema,
     Typeable attr,
     Typeable (AttributeNode attr),
     Typeable (AttributeType attr),
@@ -207,13 +207,13 @@ instance
     Typeable (AttributeNode attr),
     Typeable (AttributeType attr),
     Binary (AttributeType attr),
-    ValidSchema rest
+    KnownSchema rest
   ) =>
   HasAttribute (DefAttribute attr : rest) attr
 
 instance
   {-# OVERLAPPABLE #-}
-  (ValidSchema (def : rest), HasAttribute rest attr) =>
+  (KnownSchema (def : rest), HasAttribute rest attr) =>
   HasAttribute (def : rest) attr
 
 instance
@@ -227,7 +227,7 @@ instance
 
 type HasRelation :: Schema -> Relation -> Constraint
 class
-  ( ValidSchema schema,
+  ( KnownSchema schema,
     Typeable rel,
     Typeable (Domain rel),
     KnownCardinality (DomainCardinality rel),
@@ -243,13 +243,13 @@ instance
     KnownCardinality (DomainCardinality rel),
     Typeable (Codomain rel),
     KnownCardinality (CodomainCardinality rel),
-    ValidSchema rest
+    KnownSchema rest
   ) =>
   HasRelation (DefRelation rel : rest) rel
 
 instance
   {-# OVERLAPPABLE #-}
-  (ValidSchema (def : rest), HasRelation rest rel) =>
+  (KnownSchema (def : rest), HasRelation rest rel) =>
   HasRelation (def : rest) rel
 
 instance
