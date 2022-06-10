@@ -140,38 +140,36 @@ data SchemaDef where
 type ValidSchema :: Schema -> Constraint
 class Typeable schema => ValidSchema schema where
   foldAttributes ::
-    forall nodeType a.
+    forall a.
     Proxy schema ->
-    Proxy nodeType ->
-    AttributeFold nodeType a ->
+    AttributeFold a ->
     a ->
     a
   foldRelations ::
-    forall nodeType a.
+    forall a.
     Proxy schema ->
-    Proxy nodeType ->
-    RelationFold nodeType a ->
+    RelationFold a ->
     a ->
     a
 
 instance ValidSchema '[] where
-  foldAttributes _ _ _ x = x
-  foldRelations _ _ _ x = x
+  foldAttributes _ _ x = x
+  foldRelations _ _ x = x
 
 instance
   (Typeable nodeType, ValidSchema schema) =>
   ValidSchema (DefNode nodeType : schema)
   where
-  foldAttributes _ p f x = foldAttributes (Proxy :: Proxy schema) p f x
-  foldRelations _ p f x = foldRelations (Proxy :: Proxy schema) p f x
+  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
 
 instance
   (Typeable relation, Typeable (Codomain relation), ValidSchema schema) =>
   ValidSchema (DefRelation relation ': schema)
   where
-  foldAttributes _ p f x = foldAttributes (Proxy :: Proxy schema) p f x
-  foldRelations _ p f x =
-    foldRelations (Proxy :: Proxy schema) p f (f (Proxy :: Proxy relation) x)
+  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldRelations _ f x =
+    foldRelations (Proxy :: Proxy schema) f (f (Proxy :: Proxy relation) x)
 
 instance
   ( Typeable attr,
@@ -180,9 +178,9 @@ instance
   ) =>
   ValidSchema (DefAttribute attr ': schema)
   where
-  foldAttributes _ p f x =
-    foldAttributes (Proxy :: Proxy schema) p f (f (Proxy :: Proxy attr) x)
-  foldRelations _ p f x = foldRelations (Proxy :: Proxy schema) p f x
+  foldAttributes _ f x =
+    foldAttributes (Proxy :: Proxy schema) f (f (Proxy :: Proxy attr) x)
+  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
 
 type HasNode :: Schema -> NodeType -> Constraint
 class (ValidSchema schema, Typeable nodeType) => HasNode schema nodeType
@@ -274,16 +272,16 @@ instance
   ) =>
   HasRelation '[] rel
 
-type AttributeFold :: NodeType -> Type -> Type
-type AttributeFold nodeType a =
+type AttributeFold :: Type -> Type
+type AttributeFold a =
   forall (attr :: Attribute).
   (Typeable attr, Binary (AttributeType attr)) =>
   Proxy attr ->
   a ->
   a
 
-type RelationFold :: NodeType -> Type -> Type
-type RelationFold nodeType a =
+type RelationFold :: Type -> Type
+type RelationFold a =
   forall (relation :: Relation).
   (Typeable relation, Typeable (Codomain relation)) =>
   Proxy relation ->

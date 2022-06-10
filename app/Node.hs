@@ -165,7 +165,6 @@ instance
     put $
       foldAttributes
         (Proxy :: Proxy schema)
-        (Proxy :: Proxy nodeType)
         ( \(_ :: Proxy attr) m ->
             let k = AttributeKey (typeRep :: TypeRep attr)
              in case DMap.lookup k attrs of
@@ -177,7 +176,6 @@ instance
     put $
       foldRelations
         (Proxy :: Proxy schema)
-        (Proxy :: Proxy nodeType)
         ( \(_ :: Proxy relation) m ->
             let k = RelatedKey (typeRep :: TypeRep relation)
              in case DMap.lookup k relations of
@@ -193,7 +191,6 @@ instance
     let attrs =
           foldAttributes
             (Proxy :: Proxy schema)
-            (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy attr) m ->
                 let k = AttributeKey (typeRep :: TypeRep attr)
                  in case Map.lookup (Binary.encode k) attrMap of
@@ -206,7 +203,6 @@ instance
     let relations =
           foldRelations
             (Proxy :: Proxy schema)
-            (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy relation) m ->
                 let k = RelatedKey (typeRep :: TypeRep relation)
                  in case Map.lookup (Binary.encode k) relMap of
