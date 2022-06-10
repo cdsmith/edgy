@@ -55,7 +55,7 @@ import GHC.TypeLits (ErrorMessage (..), Symbol, TypeError)
 -- as well as any number of 'DataNode' types created by the application.
 data NodeType where
   Universe :: NodeType
-  DataNode :: Type -> NodeType
+  DataNode :: Symbol -> NodeType
 
 data Attribute where
   NamedAttribute :: NodeType -> Symbol -> Type -> Attribute

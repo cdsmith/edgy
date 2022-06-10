@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
@@ -34,12 +35,15 @@ import Schema
     SchemaDef (..),
   )
 import System.Environment (getArgs)
+import GHC.TypeLits (Symbol)
 
-class HasNode schema (DataNode record) => IsNode schema record where
-  get :: Node schema (DataNode record) -> STM record
-  set :: Node schema (DataNode record) -> record -> STM ()
+class HasNode schema (DataNode (NodeName schema record)) => IsNode schema record where
+  type NodeName schema record :: Symbol
 
-  new :: record -> STM (Node schema (DataNode record))
+  get :: Node schema (DataNode (NodeName schema record)) -> STM record
+  set :: Node schema (DataNode (NodeName schema record)) -> record -> STM ()
+
+  new :: record -> STM (Node schema (DataNode (NodeName schema record)))
   new record = do
     node <- newNode
     set node record
@@ -61,44 +65,46 @@ data Object = Object
   }
   deriving (Show)
 
-type PersonNameAttr = NamedAttribute (DataNode Person) "name" String
+type PersonNameAttr = NamedAttribute (DataNode "Person") "name" String
 
-type PersonAgeAttr = NamedAttribute (DataNode Person) "age" Int
+type PersonAgeAttr = NamedAttribute (DataNode "Person") "age" Int
 
-type ActivityNameAttr = NamedAttribute (DataNode Activity) "name" String
+type ActivityNameAttr = NamedAttribute (DataNode "Activity") "name" String
 
-type ObjectNameAttr = NamedAttribute (DataNode Object) "name" String
+type ObjectNameAttr = NamedAttribute (DataNode "Object") "name" String
 
-type SpouseRelation = Symmetric (DataNode Person) One "spouse"
+type SpouseRelation = Symmetric (DataNode "Person") One "spouse"
 
-type FriendRelation = Directed (DataNode Person) Many "friend" Many (DataNode Person)
+type FriendRelation = Directed (DataNode "Person") Many "friend" Many (DataNode "Person")
 
-type HobbyRelation = Directed (DataNode Person) Many "hobby" Many (DataNode Activity)
+type HobbyRelation = Directed (DataNode "Person") Many "hobby" Many (DataNode "Activity")
 
-type PossessionRelation = Directed (DataNode Person) One "possession" Many (DataNode Object)
+type PossessionRelation = Directed (DataNode "Person") One "possession" Many (DataNode "Object")
 
-type ToolRelation = Directed (DataNode Activity) Many "tool" Many (DataNode Object)
+type ToolRelation = Directed (DataNode "Activity") Many "tool" Many (DataNode "Object")
 
 type MySchema :: Schema
 type MySchema =
-  '[ DefNode (DataNode Person),
+  '[ DefNode (DataNode "Person"),
      DefAttribute PersonNameAttr,
      DefAttribute PersonAgeAttr,
-     DefRelation (Existence (DataNode Person)),
+     DefRelation (Existence (DataNode "Person")),
      DefRelation SpouseRelation,
      DefRelation FriendRelation,
-     DefNode (DataNode Activity),
+     DefNode (DataNode "Activity"),
      DefAttribute ActivityNameAttr,
-     DefRelation (Existence (DataNode Activity)),
+     DefRelation (Existence (DataNode "Activity")),
      DefRelation HobbyRelation,
-     DefNode (DataNode Object),
+     DefNode (DataNode "Object"),
      DefAttribute ObjectNameAttr,
-     DefRelation (Existence (DataNode Object)),
+     DefRelation (Existence (DataNode "Object")),
      DefRelation PossessionRelation,
      DefRelation ToolRelation
    ]
 
 instance IsNode MySchema Person where
+  type NodeName MySchema Person = "Person"
+
   get node =
     Person
       <$> getAttribute (Proxy :: Proxy PersonNameAttr) node
@@ -109,10 +115,12 @@ instance IsNode MySchema Person where
     setAttribute (Proxy :: Proxy PersonAgeAttr) node (age p)
 
 instance IsNode MySchema Activity where
+  type NodeName MySchema Activity = "Activity"
   get node = Activity <$> getAttribute (Proxy :: Proxy ActivityNameAttr) node
   set node a = setAttribute (Proxy :: Proxy ActivityNameAttr) node (aName a)
 
 instance IsNode MySchema Object where
+  type NodeName MySchema Object = "Object"
   get node = Object <$> getAttribute (Proxy :: Proxy ObjectNameAttr) node
   set node o = setAttribute (Proxy :: Proxy ObjectNameAttr) node (oName o)
 
@@ -124,25 +132,25 @@ makeUniverse = do
   jane <- new Person {pName = "Jane", age = 21}
   jose <- new Person {pName = "Jose", age = 22}
 
-  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe bob
-  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe jane
-  addRelated (Proxy :: Proxy (Existence (DataNode Person))) universe jose
+  addRelated (Proxy :: Proxy (Existence (DataNode "Person"))) universe bob
+  addRelated (Proxy :: Proxy (Existence (DataNode "Person"))) universe jane
+  addRelated (Proxy :: Proxy (Existence (DataNode "Person"))) universe jose
 
   poker <- new Activity {aName = "Poker"}
   hiking <- new Activity {aName = "Hiking"}
 
-  addRelated (Proxy :: Proxy (Existence (DataNode Activity))) universe poker
-  addRelated (Proxy :: Proxy (Existence (DataNode Activity))) universe hiking
+  addRelated (Proxy :: Proxy (Existence (DataNode "Activity"))) universe poker
+  addRelated (Proxy :: Proxy (Existence (DataNode "Activity"))) universe hiking
 
   deckOfCards <- new Object {oName = "Deck of Cards"}
   pokerChips <- new Object {oName = "Poker Chips"}
   trekkingPoles <- new Object {oName = "Trekking Poles"}
   trailMap <- new Object {oName = "Trail Map"}
 
-  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe deckOfCards
-  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe pokerChips
-  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe trekkingPoles
-  addRelated (Proxy :: Proxy (Existence (DataNode Object))) universe trailMap
+  addRelated (Proxy :: Proxy (Existence (DataNode "Object"))) universe deckOfCards
+  addRelated (Proxy :: Proxy (Existence (DataNode "Object"))) universe pokerChips
+  addRelated (Proxy :: Proxy (Existence (DataNode "Object"))) universe trekkingPoles
+  addRelated (Proxy :: Proxy (Existence (DataNode "Object"))) universe trailMap
 
   addRelated (Proxy :: Proxy SpouseRelation) bob jane
 
@@ -170,9 +178,9 @@ makeUniverse = do
 lookupPerson ::
   Node MySchema Universe ->
   String ->
-  STM (Node MySchema (DataNode Person))
+  STM (Node MySchema (DataNode "Person"))
 lookupPerson universe name = do
-  people <- getRelated (Proxy :: Proxy (Existence (DataNode Person))) universe
+  people <- getRelated (Proxy :: Proxy (Existence (DataNode "Person"))) universe
   matches <- filterM (fmap ((== name) . pName) . get) people
   case matches of
     [person] -> return person
@@ -180,8 +188,8 @@ lookupPerson universe name = do
     _ -> error $ "Multiple people named " ++ name
 
 missingTools ::
-  Node MySchema (DataNode Person) ->
-  STM [Node MySchema (DataNode Object)]
+  Node MySchema (DataNode "Person") ->
+  STM [Node MySchema (DataNode "Object")]
 missingTools person = do
   todo <- getRelated (Proxy :: Proxy HobbyRelation) person
   needed <- concatMapM (getRelated (Proxy :: Proxy ToolRelation)) todo
