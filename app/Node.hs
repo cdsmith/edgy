@@ -67,24 +67,24 @@ instance
   put (Node ref) = put (show ref)
   get = Node . read <$> get
 
-type AttributeKey :: Schema -> NodeType -> Attribute -> Type
-data AttributeKey schema nodeType attr where
+type AttributeKey :: Schema -> Attribute -> Type
+data AttributeKey schema attr where
   AttributeKey ::
     TypeRep attr ->
-    AttributeKey schema nodeType attr
+    AttributeKey schema attr
 
-instance Eq (AttributeKey schema nodeType attr) where
+instance Eq (AttributeKey schema attr) where
   AttributeKey a == AttributeKey b = SomeTypeRep a == SomeTypeRep b
 
-instance Ord (AttributeKey schema nodeType attr) where
+instance Ord (AttributeKey schema attr) where
   compare (AttributeKey a) (AttributeKey b) = compare (SomeTypeRep a) (SomeTypeRep b)
 
-instance GEq (AttributeKey schema nodeType) where
+instance GEq (AttributeKey schema) where
   geq (AttributeKey a) (AttributeKey b) = case geq a b of
     Just Refl -> Just Refl
     Nothing -> Nothing
 
-instance GCompare (AttributeKey schema nodeType) where
+instance GCompare (AttributeKey schema) where
   gcompare (AttributeKey a) (AttributeKey b) = case gcompare a b of
     GLT -> GLT
     GEQ -> GEQ
@@ -98,23 +98,23 @@ instance Binary (AttributeType attr) => Binary (AttributeVal schema attr) where
   put (AttributeVal x) = put x
   get = AttributeVal <$> get
 
-type RelatedKey :: Schema -> NodeType -> Relation -> Type
-data RelatedKey schema nodeType relation where
-  RelatedKey :: TypeRep relation -> RelatedKey schema nodeType relation
+type RelatedKey :: Schema -> Relation -> Type
+data RelatedKey schema relation where
+  RelatedKey :: TypeRep relation -> RelatedKey schema relation
 
-instance Eq (RelatedKey schema nodeType t) where
+instance Eq (RelatedKey schema t) where
   RelatedKey a == RelatedKey b = SomeTypeRep a == SomeTypeRep b
 
-instance Ord (RelatedKey schema nodeType t) where
+instance Ord (RelatedKey schema t) where
   compare (RelatedKey a) (RelatedKey b) =
     compare (SomeTypeRep a) (SomeTypeRep b)
 
-instance GEq (RelatedKey schema nodeType) where
+instance GEq (RelatedKey schema) where
   geq (RelatedKey a) (RelatedKey b) = case geq a b of
     Just Refl -> Just Refl
     Nothing -> Nothing
 
-instance GCompare (RelatedKey schema nodeType) where
+instance GCompare (RelatedKey schema) where
   gcompare (RelatedKey a) (RelatedKey b) = case gcompare a b of
     GLT -> GLT
     GEQ -> GEQ
@@ -137,8 +137,8 @@ type NodeImpl :: Schema -> NodeType -> Type
 data NodeImpl schema nodeType
   = NodeImpl
       UUID
-      (DMap (AttributeKey schema nodeType) (AttributeVal schema))
-      (DMap (RelatedKey schema nodeType) (RelatedVal schema))
+      (DMap (AttributeKey schema) (AttributeVal schema))
+      (DMap (RelatedKey schema) (RelatedVal schema))
 
 instance Indexable (NodeImpl schema nodeType) where
   key (NodeImpl uuid _ _) = show uuid
