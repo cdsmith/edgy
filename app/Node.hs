@@ -48,10 +48,10 @@ import Schema
     HasAttribute,
     HasNode,
     HasRelation,
+    KnownSchema (..),
     NodeType (..),
     Relation,
     Schema,
-    KnownSchema (..),
   )
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 import Type.Reflection.Unsafe (typeRepFingerprint)
@@ -90,10 +90,6 @@ instance GCompare (AttributeKey schema nodeType) where
     GEQ -> GEQ
     GGT -> GGT
 
-instance Binary (AttributeKey schema nodeType attr) where
-  put (AttributeKey k) = put (typeRepFingerprint k)
-  get = error "Cannot get"
-
 type AttributeVal :: Schema -> Attribute -> Type
 data AttributeVal schema attr where
   AttributeVal :: Binary (AttributeType attr) => AttributeType attr -> AttributeVal schema attr
@@ -124,10 +120,6 @@ instance GCompare (RelatedKey schema nodeType) where
     GEQ -> GEQ
     GGT -> GGT
 
-instance Binary (RelatedKey schema nodeType t) where
-  put (RelatedKey k) = put (typeRepFingerprint k)
-  get = error "Cannot get"
-
 type RelatedVal :: Schema -> Relation -> Type
 data RelatedVal schema relation where
   RelatedVal ::
@@ -139,7 +131,7 @@ instance
   Binary (RelatedVal schema relation)
   where
   put (RelatedVal ns) = put ns
-  get = error "Cannot get"
+  get = RelatedVal <$> get
 
 type NodeImpl :: Schema -> NodeType -> Type
 data NodeImpl schema nodeType
@@ -166,9 +158,14 @@ instance
       foldAttributes
         (Proxy :: Proxy schema)
         ( \(_ :: Proxy attr) m ->
-            let k = AttributeKey (typeRep :: TypeRep attr)
+            let tr = typeRep :: TypeRep attr
+                k = AttributeKey tr
              in case DMap.lookup k attrs of
-                  Just (AttributeVal v) -> Map.insert (Binary.encode k) (Binary.encode v) m
+                  Just (AttributeVal v) ->
+                    Map.insert
+                      (Binary.encode (typeRepFingerprint tr, show tr))
+                      (Binary.encode v)
+                      m
                   Nothing -> m
         )
         mempty
@@ -177,9 +174,14 @@ instance
       foldRelations
         (Proxy :: Proxy schema)
         ( \(_ :: Proxy relation) m ->
-            let k = RelatedKey (typeRep :: TypeRep relation)
+            let tr = typeRep :: TypeRep relation
+                k = RelatedKey tr
              in case DMap.lookup k relations of
-                  Just (RelatedVal ns) -> Map.insert (Binary.encode k) (Binary.encode ns) m
+                  Just (RelatedVal ns) ->
+                    Map.insert
+                      (Binary.encode (typeRepFingerprint tr, show tr))
+                      (Binary.encode ns)
+                      m
                   Nothing -> m
         )
         mempty
@@ -192,8 +194,11 @@ instance
           foldAttributes
             (Proxy :: Proxy schema)
             ( \(_ :: Proxy attr) m ->
-                let k = AttributeKey (typeRep :: TypeRep attr)
-                 in case Map.lookup (Binary.encode k) attrMap of
+                let tr = typeRep :: TypeRep attr
+                    k = AttributeKey tr
+                 in case Map.lookup
+                      (Binary.encode (typeRepFingerprint tr, show tr))
+                      attrMap of
                       Just val -> DMap.insert k (AttributeVal (Binary.decode val)) m
                       Nothing -> m
             )
@@ -204,8 +209,11 @@ instance
           foldRelations
             (Proxy :: Proxy schema)
             ( \(_ :: Proxy relation) m ->
-                let k = RelatedKey (typeRep :: TypeRep relation)
-                 in case Map.lookup (Binary.encode k) relMap of
+                let tr = typeRep :: TypeRep relation
+                    k = RelatedKey tr
+                 in case Map.lookup
+                      (Binary.encode (typeRepFingerprint tr, show tr))
+                      relMap of
                       Just val -> DMap.insert k (RelatedVal (Binary.decode val)) m
                       Nothing -> m
             )
