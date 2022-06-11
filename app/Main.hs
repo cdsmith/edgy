@@ -27,7 +27,7 @@ import Node
     setAttribute,
   )
 import Schema
-  ( Attribute (..),
+  ( AttributeSpec (..),
     HasNode,
     NodeType (..),
     Relation (..),
@@ -65,14 +65,6 @@ data Object = Object
   }
   deriving (Show)
 
-type PersonNameAttr = NamedAttribute (DataNode "Person") "name" String
-
-type PersonAgeAttr = NamedAttribute (DataNode "Person") "age" Int
-
-type ActivityNameAttr = NamedAttribute (DataNode "Activity") "name" String
-
-type ObjectNameAttr = NamedAttribute (DataNode "Object") "name" String
-
 type SpouseRelation = Symmetric (DataNode "Person") One "spouse"
 
 type FriendRelation = Directed (DataNode "Person") Many "friend" Many (DataNode "Person")
@@ -86,17 +78,17 @@ type ToolRelation = Directed (DataNode "Activity") Many "tool" Many (DataNode "O
 type MySchema :: Schema
 type MySchema =
   '[ DefNode (DataNode "Person"),
-     DefAttribute PersonNameAttr,
-     DefAttribute PersonAgeAttr,
+     DefAttribute (Attribute (DataNode "Person") "name" String),
+     DefAttribute (Attribute (DataNode "Person") "age" Int),
      DefRelation (Existence (DataNode "Person")),
      DefRelation SpouseRelation,
      DefRelation FriendRelation,
      DefNode (DataNode "Activity"),
-     DefAttribute ActivityNameAttr,
+     DefAttribute (Attribute (DataNode "Activity") "name" String),
      DefRelation (Existence (DataNode "Activity")),
      DefRelation HobbyRelation,
      DefNode (DataNode "Object"),
-     DefAttribute ObjectNameAttr,
+     DefAttribute (Attribute (DataNode "Object") "name" String),
      DefRelation (Existence (DataNode "Object")),
      DefRelation PossessionRelation,
      DefRelation ToolRelation
@@ -107,22 +99,22 @@ instance IsNode MySchema Person where
 
   get node =
     Person
-      <$> getAttribute (Proxy :: Proxy PersonNameAttr) node
-      <*> getAttribute (Proxy :: Proxy PersonAgeAttr) node
+      <$> getAttribute (Proxy :: Proxy "name") node
+      <*> getAttribute (Proxy :: Proxy "age") node
 
   set node p = do
-    setAttribute (Proxy :: Proxy PersonNameAttr) node (pName p)
-    setAttribute (Proxy :: Proxy PersonAgeAttr) node (age p)
+    setAttribute (Proxy :: Proxy "name") node (pName p)
+    setAttribute (Proxy :: Proxy "age") node (age p)
 
 instance IsNode MySchema Activity where
   type NodeName MySchema Activity = "Activity"
-  get node = Activity <$> getAttribute (Proxy :: Proxy ActivityNameAttr) node
-  set node a = setAttribute (Proxy :: Proxy ActivityNameAttr) node (aName a)
+  get node = Activity <$> getAttribute (Proxy :: Proxy "name") node
+  set node a = setAttribute (Proxy :: Proxy "name") node (aName a)
 
 instance IsNode MySchema Object where
   type NodeName MySchema Object = "Object"
-  get node = Object <$> getAttribute (Proxy :: Proxy ObjectNameAttr) node
-  set node o = setAttribute (Proxy :: Proxy ObjectNameAttr) node (oName o)
+  get node = Object <$> getAttribute (Proxy :: Proxy "name") node
+  set node o = setAttribute (Proxy :: Proxy "name") node (oName o)
 
 makeUniverse :: STM (Node MySchema Universe)
 makeUniverse = do
@@ -213,7 +205,7 @@ main =
         universe <- bigBang
         bob <- lookupPerson universe name
         missing <- missingTools bob
-        traverse (getAttribute (Proxy :: Proxy ObjectNameAttr)) missing
+        traverse (getAttribute (Proxy :: Proxy "name")) missing
       putStrLn $ name ++ " is missing:"
       traverse_ putStrLn missingNames
     _ -> putStrLn "Usage: main [create|query]"

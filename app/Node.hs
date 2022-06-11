@@ -38,9 +38,9 @@ import Data.Typeable (Typeable)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
+import GHC.TypeLits (Symbol)
 import Schema
-  ( Attribute,
-    AttributeNode,
+  ( AttributeSpec,
     AttributeType,
     Codomain,
     CodomainCardinality,
@@ -67,7 +67,7 @@ instance
   put (Node ref) = put (show ref)
   get = Node . read <$> get
 
-type AttributeKey :: Schema -> Attribute -> Type
+type AttributeKey :: Schema -> AttributeSpec -> Type
 data AttributeKey schema attr where
   AttributeKey ::
     TypeRep attr ->
@@ -90,7 +90,7 @@ instance GCompare (AttributeKey schema) where
     GEQ -> GEQ
     GGT -> GGT
 
-type AttributeVal :: Schema -> Attribute -> Type
+type AttributeVal :: Schema -> AttributeSpec -> Type
 data AttributeVal schema attr where
   AttributeVal :: Binary (AttributeType attr) => AttributeType attr -> AttributeVal schema attr
 
@@ -245,10 +245,14 @@ deleteNode ::
 deleteNode (Node ref) = delDBRef ref
 
 getAttribute ::
-  forall schema attr.
-  HasAttribute schema attr =>
-  Proxy attr ->
-  Node schema (AttributeNode attr) ->
+  forall
+    (name :: Symbol)
+    {schema :: Schema}
+    {nodeType :: NodeType}
+    {attr :: AttributeSpec}.
+  HasAttribute schema nodeType name attr =>
+  Proxy name ->
+  Node schema nodeType ->
   STM (AttributeType attr)
 getAttribute _ (Node ref) = do
   nodeImpl <- readDBRef ref
@@ -260,10 +264,14 @@ getAttribute _ (Node ref) = do
     Nothing -> error "getAttr: node not found"
 
 setAttribute ::
-  forall (schema :: Schema) (attr :: Attribute).
-  HasAttribute schema attr =>
-  Proxy attr ->
-  Node schema (AttributeNode attr) ->
+  forall
+    (name :: Symbol)
+    {schema :: Schema}
+    {nodeType :: NodeType}
+    {attr :: AttributeSpec}.
+  HasAttribute schema nodeType name attr =>
+  Proxy name ->
+  Node schema nodeType ->
   AttributeType attr ->
   STM ()
 setAttribute _ (Node ref) value = do

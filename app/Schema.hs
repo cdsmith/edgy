@@ -18,8 +18,7 @@ module Schema
     NodeType (..),
 
     -- * Attributes
-    Attribute (..),
-    AttributeNode,
+    AttributeSpec (..),
     AttributeType,
 
     -- * Relations
@@ -49,7 +48,8 @@ import Data.Binary (Binary (..))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
-import GHC.TypeLits (ErrorMessage (..), Symbol, TypeError)
+import Data.Void (Void)
+import GHC.TypeLits (ErrorMessage (..), KnownSymbol, Symbol, TypeError)
 
 -- The kind for node types.  There is exactly one node of the type 'Universe',
 -- as well as any number of 'DataNode' types created by the application.
@@ -57,16 +57,12 @@ data NodeType where
   Universe :: NodeType
   DataNode :: Symbol -> NodeType
 
-data Attribute where
-  NamedAttribute :: NodeType -> Symbol -> Type -> Attribute
+data AttributeSpec where
+  Attribute :: NodeType -> Symbol -> Type -> AttributeSpec
 
-type AttributeNode :: Attribute -> NodeType
-type family AttributeNode attr where
-  AttributeNode (NamedAttribute nodeType _ _) = nodeType
-
-type AttributeType :: Attribute -> Type
+type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
-  AttributeType (NamedAttribute _ _ t) = t
+  AttributeType ('Attribute _ _ t) = t
 
 data Relation where
   Directed ::
@@ -134,7 +130,7 @@ type Schema = [SchemaDef]
 -- | The kind for a single definition in an edgy schema.
 data SchemaDef where
   DefNode :: NodeType -> SchemaDef
-  DefAttribute :: Attribute -> SchemaDef
+  DefAttribute :: AttributeSpec -> SchemaDef
   DefRelation :: Relation -> SchemaDef
 
 type KnownSchema :: Schema -> Constraint
@@ -191,39 +187,39 @@ instance
   ) =>
   HasNode '[] nodeType
 
-type HasAttribute :: Schema -> Attribute -> Constraint
+type HasAttribute :: Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
 class
   ( KnownSchema schema,
+    Typeable nodeType,
+    KnownSymbol name,
     Typeable attr,
-    Typeable (AttributeNode attr),
     Typeable (AttributeType attr),
     Binary (AttributeType attr)
   ) =>
-  HasAttribute schema attr
+  HasAttribute schema nodeType name attr
+    | schema nodeType name -> attr
 
 instance
   {-# OVERLAPS #-}
-  ( Typeable attr,
-    Typeable (AttributeNode attr),
-    Typeable (AttributeType attr),
-    Binary (AttributeType attr),
+  ( Typeable nodeType,
+    KnownSymbol name,
+    Typeable t,
+    Binary t,
     KnownSchema rest
   ) =>
-  HasAttribute (DefAttribute attr : rest) attr
+  HasAttribute (DefAttribute (Attribute nodeType name t) : rest) nodeType name (Attribute nodeType name t)
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasAttribute rest attr) =>
-  HasAttribute (def : rest) attr
+  (KnownSchema (def : rest), HasAttribute rest nodeType name attr) =>
+  HasAttribute (def : rest) nodeType name attr
 
 instance
-  ( Typeable attr,
-    Typeable (AttributeNode attr),
-    Typeable (AttributeType attr),
-    Binary (AttributeType attr),
-    TypeError (Text "Attribute missing from schema: " :<>: ShowType attr)
+  ( Typeable nodeType,
+    KnownSymbol name,
+    TypeError (Text "Attribute missing from schema: " :<>: Text name :<>: Text " on " :<>: ShowType nodeType)
   ) =>
-  HasAttribute '[] attr
+  HasAttribute '[] nodeType name (Attribute nodeType name Void)
 
 type HasRelation :: Schema -> Relation -> Constraint
 class
@@ -264,7 +260,7 @@ instance
 
 type AttributeFold :: Type -> Type
 type AttributeFold a =
-  forall (attr :: Attribute).
+  forall (attr :: AttributeSpec).
   (Typeable attr, Binary (AttributeType attr)) =>
   Proxy attr ->
   a ->
