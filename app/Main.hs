@@ -4,9 +4,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Main where
 
@@ -17,7 +17,6 @@ import Control.Monad.Extra (concatMapM)
 import Data.Foldable (traverse_)
 import Data.List ((\\))
 import Data.TCache (atomicallySync)
-import GHC.TypeLits (Symbol)
 import Edgy
   ( Node,
     addRelated,
@@ -27,6 +26,7 @@ import Edgy
     newNode,
     setAttribute,
   )
+import GHC.TypeLits (Symbol)
 import Schema
   ( AttributeSpec (..),
     HasNode,
@@ -37,7 +37,10 @@ import Schema
   )
 import System.Environment (getArgs)
 
-class HasNode schema (DataNode (NodeName schema record)) => IsNode schema record where
+class
+  HasNode schema (DataNode (NodeName schema record)) =>
+  IsNode schema record
+  where
   type NodeName schema record :: Symbol
 
   get :: Node schema (DataNode (NodeName schema record)) -> STM record
@@ -67,16 +70,22 @@ data Object = Object
 
 type MySchema :: Schema
 type MySchema =
-  '[ DefNode (DataNode "Person"),
-     DefAttribute (Attribute (DataNode "Person") "name" String),
-     DefAttribute (Attribute (DataNode "Person") "age" Int),
+  '[ DefNode
+       (DataNode "Person")
+       '[ Attribute "name" String,
+          Attribute "age" Int
+        ],
      DefSymmetric "spouse" (DataNode "Person") Optional,
      DefDirected "friend" (DataNode "Person") Many (DataNode "Person") Many,
-     DefNode (DataNode "Activity"),
-     DefAttribute (Attribute (DataNode "Activity") "name" String),
+     DefNode
+       (DataNode "Activity")
+       '[ Attribute "name" String
+        ],
      DefDirected "hobby" (DataNode "Person") Many (DataNode "Activity") Many,
-     DefNode (DataNode "Object"),
-     DefAttribute (Attribute (DataNode "Object") "name" String),
+     DefNode
+       (DataNode "Object")
+       '[ Attribute "name" String
+        ],
      DefDirected "possession" (DataNode "Person") Many (DataNode "Object") Many,
      DefDirected "tool" (DataNode "Activity") Many (DataNode "Object") Many
    ]

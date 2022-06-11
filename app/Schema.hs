@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Schema
   ( -- * Nodes
@@ -36,10 +37,6 @@ module Schema
     HasNode,
     HasRelation,
     HasAttribute,
-
-    -- * Schema folds
-    AttributeFold,
-    RelationFold,
   )
 where
 
@@ -50,6 +47,8 @@ import Data.Proxy (Proxy (..))
 import Data.Typeable (Typeable)
 import Data.Void (Void)
 import GHC.TypeLits (ErrorMessage (..), KnownSymbol, Symbol, TypeError)
+import Data.Type.Equality ((:~:)(..), testEquality)
+import Type.Reflection (typeRep)
 
 -- The kind for node types.  There is exactly one node of the type 'Universe',
 -- as well as any number of 'DataNode' types created by the application.
@@ -58,11 +57,11 @@ data NodeType where
   DataNode :: Symbol -> NodeType
 
 data AttributeSpec where
-  Attribute :: NodeType -> Symbol -> Type -> AttributeSpec
+  Attribute :: Symbol -> Type -> AttributeSpec
 
 type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
-  AttributeType ('Attribute _ _ t) = t
+  AttributeType (Attribute _ t) = t
 
 data RelationId where
   Explicit :: Symbol -> RelationId
@@ -101,8 +100,7 @@ type Schema = [SchemaDef]
 
 -- | The kind for a single definition in an edgy schema.
 data SchemaDef where
-  DefNode :: NodeType -> SchemaDef
-  DefAttribute :: AttributeSpec -> SchemaDef
+  DefNode :: NodeType -> [AttributeSpec] -> SchemaDef
   DefDirected ::
     Symbol ->
     NodeType ->
@@ -114,20 +112,67 @@ data SchemaDef where
 
 type KnownSchema :: Schema -> Constraint
 class Typeable schema => KnownSchema schema where
-  foldAttributes :: Proxy schema -> AttributeFold a -> a -> a
-  foldRelations :: Proxy schema -> RelationFold a -> a -> a
+  foldAttributes ::
+    forall (nodeType :: NodeType) (a :: Type).
+    Typeable nodeType =>
+    Proxy schema ->
+    Proxy nodeType ->
+    ( forall (attr :: AttributeSpec).
+      (Typeable attr, Binary (AttributeType attr)) =>
+      Proxy attr ->
+      a ->
+      a
+    ) ->
+    a ->
+    a
+  foldRelations ::
+    Proxy schema ->
+    ( forall (relation :: RelationSpec).
+      (Typeable relation, Typeable (Codomain relation)) =>
+      Proxy relation ->
+      a ->
+      a
+    ) ->
+    a ->
+    a
 
-instance KnownSchema '[] where
-  foldAttributes _ _ x = x
-  foldRelations _ _ x = x
+type KnownAttrs :: [AttributeSpec] -> Constraint
+class Typeable attrs => KnownAttrs attrs where
+  foldNodeAttributes ::
+    Proxy attrs ->
+    ( forall (attr :: AttributeSpec).
+      (Typeable attr, Binary (AttributeType attr)) =>
+      Proxy attr ->
+      a ->
+      a
+    ) ->
+    a ->
+    a
+
+instance KnownAttrs '[] where
+  foldNodeAttributes _ _ = id
 
 instance
-  (Typeable nodeType, KnownSchema schema) =>
-  KnownSchema (DefNode nodeType : schema)
+  (Typeable attr, Binary (AttributeType attr), KnownAttrs attrs) =>
+  KnownAttrs (attr : attrs)
   where
-  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldNodeAttributes _ f x =
+    foldNodeAttributes (Proxy @attrs) f (f (Proxy @attr) x)
+
+instance KnownSchema '[] where
+  foldAttributes _ _ _ = id
+  foldRelations _ _ = id
+
+instance
+  (Typeable nodeType, KnownAttrs attrs, KnownSchema schema) =>
+  KnownSchema (DefNode nodeType attrs : schema)
+  where
+  foldAttributes _ (p :: Proxy targetNode) f x =
+    case testEquality (typeRep @nodeType) (typeRep @targetNode) of
+      Just Refl -> foldNodeAttributes (Proxy @attrs) f x
+      _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
-    foldRelations (Proxy :: Proxy schema) f (f existence (f universal x))
+    foldRelations (Proxy @schema) f (f existence (f universal x))
     where
       existence =
         Proxy ::
@@ -146,14 +191,14 @@ instance
     KnownCardinality nb,
     KnownSchema schema
   ) =>
-  KnownSchema (DefDirected name a na b nb ': schema)
+  KnownSchema (DefDirected name a na b nb : schema)
   where
-  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
-    foldRelations (Proxy :: Proxy schema) f (f fwd (f bwd x))
+    foldRelations (Proxy @schema) f (f fwd (f bwd x))
     where
-      fwd = Proxy :: Proxy (Relation (Explicit name) a na b nb)
-      bwd = Proxy :: Proxy (Relation (Inverse name) b nb a na)
+      fwd = Proxy @(Relation (Explicit name) a na b nb)
+      bwd = Proxy @(Relation (Inverse name) b nb a na)
 
 instance
   ( KnownSymbol name,
@@ -161,32 +206,21 @@ instance
     KnownCardinality n,
     KnownSchema schema
   ) =>
-  KnownSchema (DefSymmetric name nodeType n ': schema)
+  KnownSchema (DefSymmetric name nodeType n : schema)
   where
-  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
-    foldRelations (Proxy :: Proxy schema) f (f fwd x)
+    foldRelations (Proxy @schema) f (f fwd x)
     where
-      fwd = Proxy :: Proxy (Relation (Explicit name) nodeType n nodeType n)
-
-instance
-  ( Typeable attr,
-    Binary (AttributeType attr),
-    KnownSchema schema
-  ) =>
-  KnownSchema (DefAttribute attr ': schema)
-  where
-  foldAttributes _ f x =
-    foldAttributes (Proxy :: Proxy schema) f (f (Proxy :: Proxy attr) x)
-  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
+      fwd = Proxy @(Relation (Explicit name) nodeType n nodeType n)
 
 type HasNode :: Schema -> NodeType -> Constraint
 class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
 
 instance
   {-# OVERLAPS #-}
-  (Typeable nodeType, KnownSchema rest) =>
-  HasNode (DefNode nodeType : rest) nodeType
+  (Typeable nodeType, KnownAttrs attrs, KnownSchema rest) =>
+  HasNode (DefNode nodeType attrs : rest) nodeType
 
 instance
   {-# OVERLAPPABLE #-}
@@ -211,19 +245,49 @@ class
   HasAttribute schema nodeType name attr
     | schema nodeType name -> attr
 
+type NodeHasAttribute ::
+  NodeType -> [AttributeSpec] -> Symbol -> AttributeSpec -> Constraint
+class NodeHasAttribute nodeType attrs name attr | attrs name -> attr
+
+instance
+  {-# OVERLAPS #-}
+  NodeHasAttribute
+    nodeType
+    (Attribute name t : rest)
+    name
+    (Attribute name t)
+
+instance
+  {-# OVERLAPPABLE #-}
+  NodeHasAttribute nodeType rest name attr =>
+  NodeHasAttribute nodeType (other : rest) name attr
+
+instance
+  ( TypeError
+      ( Text "Attribute missing from schema: "
+          :<>: Text name
+          :<>: Text " on "
+          :<>: ShowType nodeType
+      )
+  ) =>
+  NodeHasAttribute nodeType '[] name (Attribute name Void)
+
 instance
   {-# OVERLAPS #-}
   ( Typeable nodeType,
+    KnownAttrs attrs,
     KnownSymbol name,
-    Typeable t,
-    Binary t,
+    NodeHasAttribute nodeType attrs name attr,
+    Typeable attr,
+    Typeable (AttributeType attr),
+    Binary (AttributeType attr),
     KnownSchema rest
   ) =>
   HasAttribute
-    (DefAttribute (Attribute nodeType name t) : rest)
+    (DefNode nodeType attrs : rest)
     nodeType
     name
-    (Attribute nodeType name t)
+    attr
 
 instance
   {-# OVERLAPPABLE #-}
@@ -240,7 +304,7 @@ instance
           :<>: ShowType nodeType
       )
   ) =>
-  HasAttribute '[] nodeType name (Attribute nodeType name Void)
+  HasAttribute '[] nodeType name (Attribute name Void)
 
 type HasRelation :: Schema -> RelationId -> RelationSpec -> Constraint
 class
@@ -258,20 +322,22 @@ class
 instance
   {-# OVERLAPS #-}
   ( Typeable nodeType,
+    KnownAttrs attrs,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefNode nodeType : rest)
+    (DefNode nodeType attrs : rest)
     (Existence nodeType)
     (Relation (Existence nodeType) Universe One nodeType Many)
 
 instance
   {-# OVERLAPS #-}
   ( Typeable nodeType,
+    KnownAttrs attrs,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefNode nodeType : rest)
+    (DefNode nodeType attrs : rest)
     (Universal nodeType)
     (Relation (Universal nodeType) nodeType Many Universe One)
 
@@ -325,19 +391,3 @@ instance
     TypeError (Text "Relation missing from schema: " :<>: ShowType relation)
   ) =>
   HasRelation '[] relation (Relation relation Universe One Universe One)
-
-type AttributeFold :: Type -> Type
-type AttributeFold a =
-  forall (attr :: AttributeSpec).
-  (Typeable attr, Binary (AttributeType attr)) =>
-  Proxy attr ->
-  a ->
-  a
-
-type RelationFold :: Type -> Type
-type RelationFold a =
-  forall (relation :: RelationSpec).
-  (Typeable relation, Typeable (Codomain relation)) =>
-  Proxy relation ->
-  a ->
-  a

@@ -127,12 +127,15 @@ data NodeImpl schema nodeType
 instance Indexable (NodeImpl schema nodeType) where
   key (NodeImpl uuid _ _) = show uuid
 
-instance KnownSchema schema => Serializable (NodeImpl schema nodeType) where
+instance
+  (KnownSchema schema, Typeable nodeType) =>
+  Serializable (NodeImpl schema nodeType)
+  where
   serialize = Binary.encode
   deserialize = Binary.decode
 
 instance
-  KnownSchema schema =>
+  (KnownSchema schema, Typeable nodeType) =>
   Binary (NodeImpl schema nodeType)
   where
   put (NodeImpl uuid attrs relations) = do
@@ -141,6 +144,7 @@ instance
     put $
       foldAttributes
         (Proxy :: Proxy schema)
+        (Proxy :: Proxy nodeType)
         ( \(_ :: Proxy attr) m ->
             let tr = typeRep :: TypeRep attr
                 k = AttributeKey tr
@@ -177,6 +181,7 @@ instance
     let attrs =
           foldAttributes
             (Proxy :: Proxy schema)
+            (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy attr) m ->
                 let tr = typeRep :: TypeRep attr
                     k = AttributeKey tr
