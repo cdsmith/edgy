@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -50,7 +51,8 @@ import Schema
     HasRelation,
     KnownSchema (..),
     NodeType (..),
-    Relation,
+    RelationId (..),
+    RelationSpec (..),
     Schema,
   )
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
@@ -98,14 +100,14 @@ instance Binary (AttributeType attr) => Binary (AttributeVal schema attr) where
   put (AttributeVal x) = put x
   get = AttributeVal <$> get
 
-type RelatedKey :: Schema -> Relation -> Type
+type RelatedKey :: Schema -> RelationSpec -> Type
 data RelatedKey schema relation where
   RelatedKey :: TypeRep relation -> RelatedKey schema relation
 
-instance Eq (RelatedKey schema t) where
+instance Eq (RelatedKey schema relation) where
   RelatedKey a == RelatedKey b = SomeTypeRep a == SomeTypeRep b
 
-instance Ord (RelatedKey schema t) where
+instance Ord (RelatedKey schema relation) where
   compare (RelatedKey a) (RelatedKey b) =
     compare (SomeTypeRep a) (SomeTypeRep b)
 
@@ -120,7 +122,7 @@ instance GCompare (RelatedKey schema) where
     GEQ -> GEQ
     GGT -> GGT
 
-type RelatedVal :: Schema -> Relation -> Type
+type RelatedVal :: Schema -> RelationSpec -> Type
 data RelatedVal schema relation where
   RelatedVal ::
     [Node schema (Codomain relation)] ->
@@ -251,10 +253,9 @@ getAttribute ::
     {nodeType :: NodeType}
     {attr :: AttributeSpec}.
   HasAttribute schema nodeType name attr =>
-  Proxy name ->
   Node schema nodeType ->
   STM (AttributeType attr)
-getAttribute _ (Node ref) = do
+getAttribute (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl _ attrs _) ->
@@ -270,11 +271,10 @@ setAttribute ::
     {nodeType :: NodeType}
     {attr :: AttributeSpec}.
   HasAttribute schema nodeType name attr =>
-  Proxy name ->
   Node schema nodeType ->
   AttributeType attr ->
   STM ()
-setAttribute _ (Node ref) value = do
+setAttribute (Node ref) value = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) ->
@@ -292,18 +292,17 @@ setAttribute _ (Node ref) value = do
     Nothing -> error "setAttr: node not found"
 
 getRelated ::
-  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
-  ( HasRelation schema relation,
-    n ~ CodomainCardinality relation
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec} {n :: Cardinality}.
+  ( HasRelation schema relation spec,
+    n ~ CodomainCardinality spec
   ) =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
-  STM (Numerous n (Node schema (Codomain relation)))
-getRelated _ (Node ref) = do
+  Node schema (Domain spec) ->
+  STM (Numerous n (Node schema (Codomain spec)))
+getRelated (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl _ _ relations) -> do
-      let nodes = case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
+      let nodes = case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
             Just (RelatedVal ns) -> ns
             Nothing -> []
       case toCardinality (Proxy :: Proxy n) nodes of
@@ -312,54 +311,51 @@ getRelated _ (Node ref) = do
     Nothing -> error "getRelated: node not found"
 
 isRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  HasRelation schema relation =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
-  Node schema (Codomain relation) ->
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
+  HasRelation schema relation spec =>
+  Node schema (Domain spec) ->
+  Node schema (Codomain spec) ->
   STM Bool
-isRelated _ (Node ref) target = do
+isRelated (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl _ _ relations) ->
-      case DMap.lookup (RelatedKey (typeRep :: TypeRep relation)) relations of
+      case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
         Just (RelatedVal ns) -> return (target `elem` ns)
         Nothing -> return False
     Nothing -> error "isRelated: node not found"
 
 setRelated ::
-  forall (schema :: Schema) (relation :: Relation) (n :: Cardinality).
-  (HasRelation schema relation, n ~ CodomainCardinality relation) =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
-  Numerous n (Node schema (Codomain relation)) ->
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec} {n :: Cardinality}.
+  (HasRelation schema relation spec, n ~ CodomainCardinality spec) =>
+  Node schema (Domain spec) ->
+  Numerous n (Node schema (Codomain spec)) ->
   STM ()
-setRelated _ (Node ref) target = do
+setRelated (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) ->
       writeDBRef ref $
         NodeImpl uuid attrs $
           DMap.insert
-            (RelatedKey (typeRep :: TypeRep relation))
+            (RelatedKey (typeRep :: TypeRep spec))
             (RelatedVal (fromCardinality (Proxy :: Proxy n) target))
             relations
     Nothing -> error "setRelation: node not found"
 
 addRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  HasRelation schema relation =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
-  Node schema (Codomain relation) ->
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
+  HasRelation schema relation spec =>
+  Node schema (Domain spec) ->
+  Node schema (Codomain spec) ->
   STM ()
-addRelated _ (Node ref) target = do
+addRelated (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
       let relatedKey =
             RelatedKey
-              (typeRep :: TypeRep relation)
+              (typeRep :: TypeRep spec)
           relations' = case DMap.lookup relatedKey relations of
             Just (RelatedVal targets) ->
               DMap.insert relatedKey (RelatedVal (target : targets)) relations
@@ -369,19 +365,18 @@ addRelated _ (Node ref) target = do
     Nothing -> error "addToRelation: node not found"
 
 removeRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  HasRelation schema relation =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
-  Node schema (Codomain relation) ->
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
+  HasRelation schema relation spec =>
+  Node schema (Domain spec) ->
+  Node schema (Codomain spec) ->
   STM ()
-removeRelated _ (Node ref) target = do
+removeRelated (Node ref) target = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
       let relatedKey =
             RelatedKey
-              (typeRep :: TypeRep relation)
+              (typeRep :: TypeRep spec)
           relations' = case DMap.lookup relatedKey relations of
             Just (RelatedVal targets) ->
               DMap.insert relatedKey (RelatedVal (filter (/= target) targets)) relations
@@ -390,18 +385,17 @@ removeRelated _ (Node ref) target = do
     Nothing -> error "removeFromRelation: node not found"
 
 clearRelated ::
-  forall (schema :: Schema) (relation :: Relation).
-  HasRelation schema relation =>
-  Proxy relation ->
-  Node schema (Domain relation) ->
+  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
+  HasRelation schema relation spec =>
+  Node schema (Domain spec) ->
   STM ()
-clearRelated _ (Node ref) = do
+clearRelated (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) -> do
       let relatedKey =
             RelatedKey
-              (typeRep :: TypeRep relation)
+              (typeRep :: TypeRep spec)
           relations' = DMap.insert relatedKey (RelatedVal []) relations
       writeDBRef ref (NodeImpl uuid attrs relations')
     Nothing -> error "clearRelation: node not found"

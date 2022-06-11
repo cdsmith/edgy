@@ -22,12 +22,12 @@ module Schema
     AttributeType,
 
     -- * Relations
-    Relation (..),
+    RelationSpec (..),
+    RelationId (..),
     Domain,
     DomainCardinality,
     Codomain,
     CodomainCardinality,
-    Inverse,
 
     -- * Schema
     Schema,
@@ -64,64 +64,36 @@ type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
   AttributeType ('Attribute _ _ t) = t
 
-data Relation where
-  Directed ::
-    NodeType ->
-    Cardinality ->
-    Symbol ->
-    Cardinality ->
-    NodeType ->
-    Relation
-  Symmetric :: NodeType -> Cardinality -> Symbol -> Relation
-  Backward ::
-    NodeType ->
-    Cardinality ->
-    Symbol ->
-    Cardinality ->
-    NodeType ->
-    Relation
-  Existence :: NodeType -> Relation
-  Universal :: NodeType -> Relation
+data RelationId where
+  Explicit :: Symbol -> RelationId
+  Inverse :: Symbol -> RelationId
+  Existence :: NodeType -> RelationId
+  Universal :: NodeType -> RelationId
 
-type Domain :: Relation -> NodeType
+data RelationSpec where
+  Relation ::
+    RelationId ->
+    NodeType ->
+    Cardinality ->
+    NodeType ->
+    Cardinality ->
+    RelationSpec
+
+type Domain :: RelationSpec -> NodeType
 type family Domain rel where
-  Domain (Directed a na name nb b) = a
-  Domain (Backward b nb name na a) = b
-  Domain (Symmetric nodeType n name) = nodeType
-  Domain (Existence nodeType) = Universe
-  Domain (Universal nodeType) = nodeType
+  Domain (Relation _ nodeType _ _ _) = nodeType
 
-type DomainCardinality :: Relation -> Cardinality
+type DomainCardinality :: RelationSpec -> Cardinality
 type family DomainCardinality rel where
-  DomainCardinality (Directed a na name nb b) = na
-  DomainCardinality (Backward b nb name na a) = nb
-  DomainCardinality (Symmetric nodeType n name) = n
-  DomainCardinality (Existence nodeType) = One
-  DomainCardinality (Universal nodeType) = Many
+  DomainCardinality (Relation _ _ n _ _) = n
 
-type Codomain :: Relation -> NodeType
+type Codomain :: RelationSpec -> NodeType
 type family Codomain rel where
-  Codomain (Directed a na name nb b) = b
-  Codomain (Backward b nb name na a) = a
-  Codomain (Symmetric nodeType n name) = nodeType
-  Codomain (Existence nodeType) = nodeType
-  Codomain (Universal nodeType) = Universe
+  Codomain (Relation _ _ _ nodeType _) = nodeType
 
-type CodomainCardinality :: Relation -> Cardinality
+type CodomainCardinality :: RelationSpec -> Cardinality
 type family CodomainCardinality rel where
-  CodomainCardinality (Directed a na name nb b) = nb
-  CodomainCardinality (Backward b nb name na a) = na
-  CodomainCardinality (Symmetric nodeType n name) = n
-  CodomainCardinality (Existence nodeType) = Many
-  CodomainCardinality (Universal nodeType) = One
-
-type Inverse :: Relation -> Relation
-type family Inverse relation where
-  Inverse (Directed a na name nb b) = Backward b nb name na a
-  Inverse (Backward b nb name na a) = Directed a na name nb b
-  Inverse (Symmetric nodeType n name) = Symmetric nodeType n name
-  Inverse (Existence nodeType) = Universal nodeType
-  Inverse (Universal nodeType) = Existence nodeType
+  CodomainCardinality (Relation _ _ _ _ n) = n
 
 -- | The kind for an edgy schema.  An edgy schema is itself a type, specifying
 -- the node types, attributes, and relations that make up the data model.
@@ -131,7 +103,14 @@ type Schema = [SchemaDef]
 data SchemaDef where
   DefNode :: NodeType -> SchemaDef
   DefAttribute :: AttributeSpec -> SchemaDef
-  DefRelation :: Relation -> SchemaDef
+  DefDirected ::
+    Symbol ->
+    NodeType ->
+    Cardinality ->
+    NodeType ->
+    Cardinality ->
+    SchemaDef
+  DefSymmetric :: Symbol -> NodeType -> Cardinality -> SchemaDef
 
 type KnownSchema :: Schema -> Constraint
 class Typeable schema => KnownSchema schema where
@@ -147,15 +126,30 @@ instance
   KnownSchema (DefNode nodeType : schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
-  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f x
+  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f (f existence (f universal x))
+    where
+      existence = Proxy :: Proxy (Relation (Existence nodeType) Universe One nodeType Many)
+      universal = Proxy :: Proxy (Relation (Universal nodeType) nodeType Many Universe One)
 
 instance
-  (Typeable relation, Typeable (Codomain relation), KnownSchema schema) =>
-  KnownSchema (DefRelation relation ': schema)
+  (KnownSymbol name, Typeable a, KnownCardinality na, Typeable b, KnownCardinality nb, KnownSchema schema) =>
+  KnownSchema (DefDirected name a na b nb ': schema)
+  where
+  foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
+  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f (f fwd (f bwd x))
+    where
+      fwd = Proxy :: Proxy (Relation (Explicit name) a na b nb)
+      bwd = Proxy :: Proxy (Relation (Inverse name) b nb a na)
+
+instance
+  (KnownSymbol name, Typeable nodeType, KnownCardinality n, KnownSchema schema) =>
+  KnownSchema (DefSymmetric name nodeType n ': schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
   foldRelations _ f x =
-    foldRelations (Proxy :: Proxy schema) f (f (Proxy :: Proxy relation) x)
+    foldRelations (Proxy :: Proxy schema) f (f fwd x)
+    where
+      fwd = Proxy :: Proxy (Relation (Explicit name) nodeType n nodeType n)
 
 instance
   ( Typeable attr,
@@ -221,42 +215,74 @@ instance
   ) =>
   HasAttribute '[] nodeType name (Attribute nodeType name Void)
 
-type HasRelation :: Schema -> Relation -> Constraint
+type HasRelation :: Schema -> RelationId -> RelationSpec -> Constraint
 class
   ( KnownSchema schema,
-    Typeable rel,
-    Typeable (Domain rel),
-    KnownCardinality (DomainCardinality rel),
-    Typeable (Codomain rel),
-    KnownCardinality (CodomainCardinality rel)
+    Typeable relation,
+    Typeable spec,
+    Typeable (Domain spec),
+    KnownCardinality (DomainCardinality spec),
+    Typeable (Codomain spec),
+    KnownCardinality (CodomainCardinality spec)
   ) =>
-  HasRelation schema rel
+  HasRelation schema relation spec
+    | schema relation -> spec
 
 instance
   {-# OVERLAPS #-}
-  ( Typeable rel,
-    Typeable (Domain rel),
-    KnownCardinality (DomainCardinality rel),
-    Typeable (Codomain rel),
-    KnownCardinality (CodomainCardinality rel),
+  ( Typeable nodeType,
     KnownSchema rest
   ) =>
-  HasRelation (DefRelation rel : rest) rel
+  HasRelation (DefNode nodeType : rest) (Existence nodeType) (Relation (Existence nodeType) Universe One nodeType Many)
+
+instance
+  {-# OVERLAPS #-}
+  ( Typeable nodeType,
+    KnownSchema rest
+  ) =>
+  HasRelation (DefNode nodeType : rest) (Universal nodeType) (Relation (Universal nodeType) nodeType Many Universe One)
+
+instance
+  {-# OVERLAPS #-}
+  ( KnownSymbol name,
+    Typeable a,
+    KnownCardinality na,
+    Typeable b,
+    KnownCardinality nb,
+    KnownSchema rest
+  ) =>
+  HasRelation (DefDirected name a na b nb : rest) (Explicit name) (Relation (Explicit name) a na b nb)
+
+instance
+  {-# OVERLAPS #-}
+  ( KnownSymbol name,
+    Typeable a,
+    KnownCardinality na,
+    Typeable b,
+    KnownCardinality nb,
+    KnownSchema rest
+  ) =>
+  HasRelation (DefDirected name a na b nb : rest) (Inverse name) (Relation (Inverse name) b nb a na)
+
+instance
+  {-# OVERLAPS #-}
+  ( KnownSymbol name,
+    Typeable nodeType,
+    KnownCardinality n,
+    KnownSchema rest
+  ) =>
+  HasRelation (DefSymmetric name nodeType n : rest) (Explicit name) (Relation (Explicit name) nodeType n nodeType n)
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasRelation rest rel) =>
-  HasRelation (def : rest) rel
+  (KnownSchema (def : rest), HasRelation rest relation spec) =>
+  HasRelation (def : rest) relation spec
 
 instance
-  ( Typeable rel,
-    Typeable (Domain rel),
-    KnownCardinality (DomainCardinality rel),
-    Typeable (Codomain rel),
-    KnownCardinality (CodomainCardinality rel),
-    TypeError (Text "Relation missing from schema: " :<>: ShowType rel)
+  ( Typeable relation,
+    TypeError (Text "Relation missing from schema: " :<>: ShowType relation)
   ) =>
-  HasRelation '[] rel
+  HasRelation '[] relation (Relation relation Universe One Universe One)
 
 type AttributeFold :: Type -> Type
 type AttributeFold a =
@@ -268,7 +294,7 @@ type AttributeFold a =
 
 type RelationFold :: Type -> Type
 type RelationFold a =
-  forall (relation :: Relation).
+  forall (relation :: RelationSpec).
   (Typeable relation, Typeable (Codomain relation)) =>
   Proxy relation ->
   a ->
