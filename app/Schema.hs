@@ -126,23 +126,41 @@ instance
   KnownSchema (DefNode nodeType : schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
-  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f (f existence (f universal x))
+  foldRelations _ f x =
+    foldRelations (Proxy :: Proxy schema) f (f existence (f universal x))
     where
-      existence = Proxy :: Proxy (Relation (Existence nodeType) Universe One nodeType Many)
-      universal = Proxy :: Proxy (Relation (Universal nodeType) nodeType Many Universe One)
+      existence =
+        Proxy ::
+          Proxy
+            (Relation (Existence nodeType) Universe One nodeType Many)
+      universal =
+        Proxy ::
+          Proxy
+            (Relation (Universal nodeType) nodeType Many Universe One)
 
 instance
-  (KnownSymbol name, Typeable a, KnownCardinality na, Typeable b, KnownCardinality nb, KnownSchema schema) =>
+  ( KnownSymbol name,
+    Typeable a,
+    KnownCardinality na,
+    Typeable b,
+    KnownCardinality nb,
+    KnownSchema schema
+  ) =>
   KnownSchema (DefDirected name a na b nb ': schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
-  foldRelations _ f x = foldRelations (Proxy :: Proxy schema) f (f fwd (f bwd x))
+  foldRelations _ f x =
+    foldRelations (Proxy :: Proxy schema) f (f fwd (f bwd x))
     where
       fwd = Proxy :: Proxy (Relation (Explicit name) a na b nb)
       bwd = Proxy :: Proxy (Relation (Inverse name) b nb a na)
 
 instance
-  (KnownSymbol name, Typeable nodeType, KnownCardinality n, KnownSchema schema) =>
+  ( KnownSymbol name,
+    Typeable nodeType,
+    KnownCardinality n,
+    KnownSchema schema
+  ) =>
   KnownSchema (DefSymmetric name nodeType n ': schema)
   where
   foldAttributes _ f x = foldAttributes (Proxy :: Proxy schema) f x
@@ -201,7 +219,11 @@ instance
     Binary t,
     KnownSchema rest
   ) =>
-  HasAttribute (DefAttribute (Attribute nodeType name t) : rest) nodeType name (Attribute nodeType name t)
+  HasAttribute
+    (DefAttribute (Attribute nodeType name t) : rest)
+    nodeType
+    name
+    (Attribute nodeType name t)
 
 instance
   {-# OVERLAPPABLE #-}
@@ -211,7 +233,12 @@ instance
 instance
   ( Typeable nodeType,
     KnownSymbol name,
-    TypeError (Text "Attribute missing from schema: " :<>: Text name :<>: Text " on " :<>: ShowType nodeType)
+    TypeError
+      ( Text "Attribute missing from schema: "
+          :<>: Text name
+          :<>: Text " on "
+          :<>: ShowType nodeType
+      )
   ) =>
   HasAttribute '[] nodeType name (Attribute nodeType name Void)
 
@@ -233,14 +260,20 @@ instance
   ( Typeable nodeType,
     KnownSchema rest
   ) =>
-  HasRelation (DefNode nodeType : rest) (Existence nodeType) (Relation (Existence nodeType) Universe One nodeType Many)
+  HasRelation
+    (DefNode nodeType : rest)
+    (Existence nodeType)
+    (Relation (Existence nodeType) Universe One nodeType Many)
 
 instance
   {-# OVERLAPS #-}
   ( Typeable nodeType,
     KnownSchema rest
   ) =>
-  HasRelation (DefNode nodeType : rest) (Universal nodeType) (Relation (Universal nodeType) nodeType Many Universe One)
+  HasRelation
+    (DefNode nodeType : rest)
+    (Universal nodeType)
+    (Relation (Universal nodeType) nodeType Many Universe One)
 
 instance
   {-# OVERLAPS #-}
@@ -251,7 +284,10 @@ instance
     KnownCardinality nb,
     KnownSchema rest
   ) =>
-  HasRelation (DefDirected name a na b nb : rest) (Explicit name) (Relation (Explicit name) a na b nb)
+  HasRelation
+    (DefDirected name a na b nb : rest)
+    (Explicit name)
+    (Relation (Explicit name) a na b nb)
 
 instance
   {-# OVERLAPS #-}
@@ -262,7 +298,10 @@ instance
     KnownCardinality nb,
     KnownSchema rest
   ) =>
-  HasRelation (DefDirected name a na b nb : rest) (Inverse name) (Relation (Inverse name) b nb a na)
+  HasRelation
+    (DefDirected name a na b nb : rest)
+    (Inverse name)
+    (Relation (Inverse name) b nb a na)
 
 instance
   {-# OVERLAPS #-}
@@ -271,7 +310,10 @@ instance
     KnownCardinality n,
     KnownSchema rest
   ) =>
-  HasRelation (DefSymmetric name nodeType n : rest) (Explicit name) (Relation (Explicit name) nodeType n nodeType n)
+  HasRelation
+    (DefSymmetric name nodeType n : rest)
+    (Explicit name)
+    (Relation (Explicit name) nodeType n nodeType n)
 
 instance
   {-# OVERLAPPABLE #-}

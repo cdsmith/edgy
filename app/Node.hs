@@ -57,7 +57,8 @@ instance Eq (AttributeKey schema attr) where
   AttributeKey a == AttributeKey b = SomeTypeRep a == SomeTypeRep b
 
 instance Ord (AttributeKey schema attr) where
-  compare (AttributeKey a) (AttributeKey b) = compare (SomeTypeRep a) (SomeTypeRep b)
+  compare (AttributeKey a) (AttributeKey b) =
+    compare (SomeTypeRep a) (SomeTypeRep b)
 
 instance GEq (AttributeKey schema) where
   geq (AttributeKey a) (AttributeKey b) = case geq a b of
@@ -72,7 +73,10 @@ instance GCompare (AttributeKey schema) where
 
 type AttributeVal :: Schema -> AttributeSpec -> Type
 data AttributeVal schema attr where
-  AttributeVal :: Binary (AttributeType attr) => AttributeType attr -> AttributeVal schema attr
+  AttributeVal ::
+    Binary (AttributeType attr) =>
+    AttributeType attr ->
+    AttributeVal schema attr
 
 instance Binary (AttributeType attr) => Binary (AttributeVal schema attr) where
   put (AttributeVal x) = put x
@@ -179,7 +183,11 @@ instance
                  in case Map.lookup
                       (Binary.encode (typeRepFingerprint tr, show tr))
                       attrMap of
-                      Just val -> DMap.insert k (AttributeVal (Binary.decode val)) m
+                      Just val ->
+                        DMap.insert
+                          k
+                          (AttributeVal (Binary.decode val))
+                          m
                       Nothing -> m
             )
             DMap.empty
@@ -194,7 +202,11 @@ instance
                  in case Map.lookup
                       (Binary.encode (typeRepFingerprint tr, show tr))
                       relMap of
-                      Just val -> DMap.insert k (RelatedVal (Binary.decode val)) m
+                      Just val ->
+                        DMap.insert
+                          k
+                          (RelatedVal (Binary.decode val))
+                          m
                       Nothing -> m
             )
             DMap.empty

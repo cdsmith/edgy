@@ -140,7 +140,8 @@ getRelated (Node ref) = do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl _ _ relations) -> do
-      let nodes = case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
+      let val = DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations
+      let nodes = case val of
             Just (RelatedVal ns) -> ns
             Nothing -> []
       case toCardinality (Proxy :: Proxy n) nodes of
@@ -164,7 +165,11 @@ isRelated (Node ref) target = do
     Nothing -> error "isRelated: node not found"
 
 setRelated ::
-  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec} {n :: Cardinality}.
+  forall
+    (relation :: RelationId)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {n :: Cardinality}.
   (HasRelation schema relation spec, n ~ CodomainCardinality spec) =>
   Node schema (Domain spec) ->
   Numerous n (Node schema (Codomain spec)) ->
@@ -217,7 +222,10 @@ removeRelated (Node ref) target = do
               (typeRep :: TypeRep spec)
           relations' = case DMap.lookup relatedKey relations of
             Just (RelatedVal targets) ->
-              DMap.insert relatedKey (RelatedVal (filter (/= target) targets)) relations
+              DMap.insert
+                relatedKey
+                (RelatedVal (filter (/= target) targets))
+                relations
             Nothing -> relations
       writeDBRef ref (NodeImpl uuid attrs relations')
     Nothing -> error "removeFromRelation: node not found"
