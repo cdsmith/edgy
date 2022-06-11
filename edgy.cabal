@@ -24,6 +24,7 @@ extra-source-files: CHANGELOG.md
 executable edgy
     main-is:          Main.hs
     other-modules:    Cardinality,
+                      Edgy,
                       Node,
                       Schema
 

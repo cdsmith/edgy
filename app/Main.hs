@@ -18,7 +18,7 @@ import Data.Foldable (traverse_)
 import Data.List ((\\))
 import Data.TCache (atomicallySync)
 import GHC.TypeLits (Symbol)
-import Node
+import Edgy
   ( Node,
     addRelated,
     bigBang,
