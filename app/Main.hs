@@ -136,26 +136,26 @@ makeUniverse = do
   trekkingPoles <- new Object {oName = "Trekking Poles"}
   trailMap <- new Object {oName = "Trail Map"}
 
-  addRelated @(Explicit "spouse") bob jane
+  addRelated @"spouse" bob jane
 
-  addRelated @(Explicit "friend") bob jane
-  addRelated @(Explicit "friend") bob jose
-  addRelated @(Explicit "friend") jose bob
-  addRelated @(Explicit "friend") jane jose
+  addRelated @"friend" bob jane
+  addRelated @"friend" bob jose
+  addRelated @"friend" jose bob
+  addRelated @"friend" jane jose
 
-  addRelated @(Explicit "hobby") bob poker
-  addRelated @(Explicit "hobby") bob hiking
-  addRelated @(Explicit "hobby") jane poker
-  addRelated @(Explicit "hobby") jose hiking
+  addRelated @"hobby" bob poker
+  addRelated @"hobby" bob hiking
+  addRelated @"hobby" jane poker
+  addRelated @"hobby" jose hiking
 
-  addRelated @(Explicit "possession") bob trailMap
-  addRelated @(Explicit "possession") jane deckOfCards
-  addRelated @(Explicit "possession") jose trekkingPoles
+  addRelated @"possession" bob trailMap
+  addRelated @"possession" jane deckOfCards
+  addRelated @"possession" jose trekkingPoles
 
-  addRelated @(Explicit "tool") poker deckOfCards
-  addRelated @(Explicit "tool") poker pokerChips
-  addRelated @(Explicit "tool") hiking trekkingPoles
-  addRelated @(Explicit "tool") hiking trailMap
+  addRelated @"tool" poker deckOfCards
+  addRelated @"tool" poker pokerChips
+  addRelated @"tool" hiking trekkingPoles
+  addRelated @"tool" hiking trailMap
 
   return universe
 

@@ -29,8 +29,10 @@ module Edgy
 where
 
 import Cardinality (Cardinality (..), KnownCardinality (..), Numerous)
+import Control.Monad (forM_)
 import qualified Data.Dependent.Map as DMap
 import Data.Kind (Type)
+import Data.List ((\\))
 import Data.TCache
   ( STM,
     delDBRef,
@@ -40,7 +42,8 @@ import Data.TCache
     safeIOToSTM,
     writeDBRef,
   )
-import Data.Typeable (Typeable)
+import Data.Type.Equality (TestEquality (testEquality), (:~:) (..))
+import Data.Typeable (Proxy (..), Typeable)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import GHC.TypeLits (KnownSymbol, Symbol)
@@ -69,6 +72,7 @@ import Schema
     RelationSpec (..),
     Schema,
     UniversalSpec,
+    foldRelations,
   )
 import Type.Reflection (TypeRep, typeRep)
 
@@ -134,10 +138,26 @@ newNode = Edgy $ do
   return node
 
 deleteNode ::
-  (HasNode schema nodeType, nodeType ~ DataNode n) =>
-  Node schema nodeType ->
+  forall (typeName :: Symbol) {schema :: Schema}.
+  (KnownSymbol typeName, HasNode schema (DataNode typeName)) =>
+  Node schema (DataNode typeName) ->
   Edgy schema ()
-deleteNode (Node ref) = Edgy $ delDBRef ref
+deleteNode node@(Node ref) = Edgy $ do
+  foldRelations
+    (Proxy @schema)
+    ( \(_ :: Proxy relation) (_ :: Proxy inverse) delRemaining -> do
+        case testEquality
+          (typeRep @(Domain relation))
+          (typeRep @(DataNode typeName)) of
+          Just Refl -> do
+            nodes <- getEdges @relation node
+            forM_ nodes $ \n -> do
+              modifyEdges @inverse n (filter (/= node))
+          Nothing -> return ()
+        delRemaining
+    )
+    (return ())
+  delDBRef ref
 
 getAttribute ::
   forall
@@ -182,15 +202,16 @@ setAttribute (Node ref) value = Edgy $ do
             )
             relations
         )
-    Nothing -> error "getAttribute: node not found"
+    Nothing -> error "setAttribute: node not found"
 
 getRelated ::
   forall
     (relation :: RelationId)
     {schema :: Schema}
     {spec :: RelationSpec}
+    {inverse :: RelationSpec}
     {n :: Cardinality}.
-  (HasRelation schema relation spec, n ~ CodomainCardinality spec) =>
+  (HasRelation schema relation spec inverse, n ~ CodomainCardinality spec) =>
   Node schema (Domain spec) ->
   Edgy schema (Numerous n (Node schema (Codomain spec)))
 getRelated node = Edgy $ do
@@ -199,8 +220,12 @@ getRelated node = Edgy $ do
     Nothing -> error "getRelated: bad cardinality"
 
 isRelated ::
-  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
-  HasRelation schema relation spec =>
+  forall
+    (relation :: RelationId)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {inverse :: RelationSpec}.
+  HasRelation schema relation spec inverse =>
   Node schema (Domain spec) ->
   Node schema (Codomain spec) ->
   Edgy schema Bool
@@ -208,36 +233,63 @@ isRelated node target = Edgy $ elem target <$> getEdges @spec node
 
 setRelated ::
   forall
-    (relation :: RelationId)
+    (relationName :: Symbol)
     {schema :: Schema}
     {spec :: RelationSpec}
+    {inverse :: RelationSpec}
     {n :: Cardinality}.
-  (HasRelation schema relation spec, n ~ CodomainCardinality spec) =>
+  ( HasRelation schema (Explicit relationName) spec inverse,
+    n ~ CodomainCardinality spec
+  ) =>
   Node schema (Domain spec) ->
   Numerous n (Node schema (Codomain spec)) ->
   Edgy schema ()
-setRelated node target = Edgy $ do
-  modifyEdges @spec node (const (numerousToList @n target))
+setRelated a target = Edgy $ do
+  oldNodes <- getEdges @spec a
+  let newNodes = numerousToList @n target
+  modifyEdges @spec a (const newNodes)
+  forM_ (oldNodes \\ newNodes) $ \b -> modifyEdges @inverse b (filter (/= a))
+  forM_ (newNodes \\ oldNodes) $ \b -> modifyEdges @inverse b (a :)
 
 addRelated ::
-  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
-  HasRelation schema relation spec =>
+  forall
+    (relationName :: Symbol)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {inverse :: RelationSpec}.
+  HasRelation schema (Explicit relationName) spec inverse =>
   Node schema (Domain spec) ->
   Node schema (Codomain spec) ->
   Edgy schema ()
-addRelated node target = Edgy $ modifyEdges @spec node (target :)
+addRelated a b = Edgy $ do
+  modifyEdges @spec a (b :)
+  modifyEdges @inverse b (a :)
 
 removeRelated ::
-  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
-  HasRelation schema relation spec =>
+  forall
+    (relationName :: Symbol)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {inverse :: RelationSpec}.
+  HasRelation schema (Explicit relationName) spec inverse =>
   Node schema (Domain spec) ->
   Node schema (Codomain spec) ->
   Edgy schema ()
-removeRelated node target = Edgy $ modifyEdges @spec node (filter (/= target))
+removeRelated a b = Edgy $ do
+  modifyEdges @spec a (filter (/= b))
+  modifyEdges @inverse b (filter (/= a))
 
 clearRelated ::
-  forall (relation :: RelationId) {schema :: Schema} {spec :: RelationSpec}.
-  HasRelation schema relation spec =>
+  forall
+    (relationName :: Symbol)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {inverse :: RelationSpec}.
+  HasRelation schema (Explicit relationName) spec inverse =>
   Node schema (Domain spec) ->
   Edgy schema ()
-clearRelated node = Edgy $ modifyEdges @spec node (const [])
+clearRelated node = Edgy $ do
+  nodes <- getEdges @spec node
+  forM_ nodes $ \n -> do
+    modifyEdges @inverse n (filter (/= node))
+  modifyEdges @spec node (const [])

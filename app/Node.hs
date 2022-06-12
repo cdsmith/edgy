@@ -161,7 +161,7 @@ instance
     put $
       foldRelations
         (Proxy :: Proxy schema)
-        ( \(_ :: Proxy relation) m ->
+        ( \(_ :: Proxy relation) _ m ->
             let tr = typeRep :: TypeRep relation
                 k = RelatedKey tr
              in case DMap.lookup k relations of
@@ -201,7 +201,7 @@ instance
     let relations =
           foldRelations
             (Proxy :: Proxy schema)
-            ( \(_ :: Proxy relation) m ->
+            ( \(_ :: Proxy relation) _ m ->
                 let tr = typeRep :: TypeRep relation
                     k = RelatedKey tr
                  in case Map.lookup
