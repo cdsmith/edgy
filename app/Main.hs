@@ -26,9 +26,10 @@ import Edgy
     RelationId (..),
     SchemaDef (..),
     addRelated,
-    getUniverse,
     getAttribute,
     getRelated,
+    getUniverse,
+    removeRelated,
     setAttribute,
   )
 import System.Environment (getArgs)
@@ -88,24 +89,24 @@ instance
   set node o = setAttribute @"name" node (oName o)
 
 type MySchema =
-  '[ DefNode
+  '[ DefSymmetric (DataNode "Person") "spouse" Optional,
+     DefDirected Many (DataNode "Person") "friend" Many (DataNode "Person"),
+     DefDirected Many (DataNode "Person") "hobby" Many (DataNode "Activity"),
+     DefDirected Many (DataNode "Person") "possession" Many (DataNode "Object"),
+     DefDirected Many (DataNode "Activity") "tool" Many (DataNode "Object"),
+     DefNode
        (DataNode "Person")
        '[ Attribute "name" String,
           Attribute "age" Int
         ],
-     DefSymmetric (DataNode "Person") "spouse" Optional,
-     DefDirected Many (DataNode "Person") "friend" Many (DataNode "Person"),
      DefNode
        (DataNode "Activity")
        '[ Attribute "name" String
         ],
-     DefDirected Many (DataNode "Person") "hobby" Many (DataNode "Activity"),
      DefNode
        (DataNode "Object")
        '[ Attribute "name" String
-        ],
-     DefDirected Many (DataNode "Person") "possession" Many (DataNode "Object"),
-     DefDirected Many (DataNode "Activity") "tool" Many (DataNode "Object")
+        ]
    ]
 
 bigBang :: Edgy MySchema (Node MySchema Universe)
@@ -159,6 +160,18 @@ lookupPerson universe name = do
     [] -> error $ "No person named " ++ name
     _ -> error $ "Multiple people named " ++ name
 
+lookupObject ::
+  Node MySchema Universe ->
+  String ->
+  Edgy MySchema (Node MySchema (DataNode "Object"))
+lookupObject universe name = do
+  objs <- getRelated @(Existence "Object") universe
+  matches <- filterM (fmap ((== name) . oName) . get) objs
+  case matches of
+    [obj] -> return obj
+    [] -> error $ "No object named " ++ name
+    _ -> error $ "Multiple objects named " ++ name
+
 missingTools ::
   Node MySchema (DataNode "Person") ->
   Edgy MySchema [Node MySchema (DataNode "Object")]
@@ -189,4 +202,40 @@ main =
           traverse (getAttribute @"name") missing
       putStrLn $ name ++ " is missing:"
       traverse_ putStrLn missingNames
-    _ -> putStrLn "Usage: main [create|query]"
+    ["buy", name, tool] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person <- lookupPerson universe name
+        object <- lookupObject universe tool
+        addRelated @"possession" person object
+    ["discard", name, tool] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person <- lookupPerson universe name
+        object <- lookupObject universe tool
+        removeRelated @"possession" person object
+    ["friend", name1, name2] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person1 <- lookupPerson universe name1
+        person2 <- lookupPerson universe name2
+        addRelated @"friend" person1 person2
+    ["unfriend", name1, name2] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person1 <- lookupPerson universe name1
+        person2 <- lookupPerson universe name2
+        removeRelated @"friend" person1 person2
+    ["marry", name1, name2] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person1 <- lookupPerson universe name1
+        person2 <- lookupPerson universe name2
+        addRelated @"spouse" person1 person2
+    ["divorce", name1, name2] -> atomicallySync $
+      runEdgy $ do
+        universe <- getUniverse
+        person1 <- lookupPerson universe name1
+        person2 <- lookupPerson universe name2
+        removeRelated @"spouse" person1 person2
+    _ -> putStrLn "Usage: main [cmd]"
