@@ -3,11 +3,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Main where
 
@@ -17,31 +15,23 @@ import Data.Foldable (traverse_)
 import Data.List ((\\))
 import Data.TCache (atomicallySync)
 import Edgy
-import GHC.TypeLits (KnownSymbol, Symbol)
+  ( AttributeSpec (..),
+    Cardinality (..),
+    Edgy (..),
+    HasAttribute,
+    HasNode,
+    IsNode (..),
+    Node,
+    NodeType (..),
+    RelationId (..),
+    SchemaDef (..),
+    addRelated,
+    getUniverse,
+    getAttribute,
+    getRelated,
+    setAttribute,
+  )
 import System.Environment (getArgs)
-
-class
-  HasNode schema (DataNode (NodeName schema record)) =>
-  IsNode schema record
-  where
-  type NodeName schema record :: Symbol
-
-  get ::
-    Node schema (DataNode (NodeName schema record)) ->
-    Edgy schema record
-  set ::
-    Node schema (DataNode (NodeName schema record)) ->
-    record ->
-    Edgy schema ()
-
-  new ::
-    KnownSymbol (NodeName schema record) =>
-    record ->
-    Edgy schema (Node schema (DataNode (NodeName schema record)))
-  new record = do
-    node <- newNode
-    set node record
-    return node
 
 data Person = Person
   { pName :: String,
@@ -49,17 +39,54 @@ data Person = Person
   }
   deriving (Show)
 
+instance
+  ( HasNode schema (DataNode "Person"),
+    HasAttribute schema (DataNode "Person") "name" (Attribute "name" String),
+    HasAttribute schema (DataNode "Person") "age" (Attribute "age" Int)
+  ) =>
+  IsNode schema Person
+  where
+  type NodeName schema Person = "Person"
+
+  get node =
+    Person
+      <$> getAttribute @"name" node
+      <*> getAttribute @"age" node
+
+  set node p = do
+    setAttribute @"name" node (pName p)
+    setAttribute @"age" node (age p)
+
 data Activity = Activity
   { aName :: String
   }
   deriving (Show)
+
+instance
+  ( HasNode schema (DataNode "Activity"),
+    HasAttribute schema (DataNode "Activity") "name" (Attribute "name" String)
+  ) =>
+  IsNode schema Activity
+  where
+  type NodeName schema Activity = "Activity"
+  get node = Activity <$> getAttribute @"name" node
+  set node a = setAttribute @"name" node (aName a)
 
 data Object = Object
   { oName :: String
   }
   deriving (Show)
 
-type MySchema :: Schema
+instance
+  ( HasNode schema (DataNode "Object"),
+    HasAttribute schema (DataNode "Object") "name" (Attribute "name" String)
+  ) =>
+  IsNode schema Object
+  where
+  type NodeName schema Object = "Object"
+  get node = Object <$> getAttribute @"name" node
+  set node o = setAttribute @"name" node (oName o)
+
 type MySchema =
   '[ DefNode
        (DataNode "Person")
@@ -81,31 +108,9 @@ type MySchema =
      DefDirected Many (DataNode "Activity") "tool" Many (DataNode "Object")
    ]
 
-instance IsNode MySchema Person where
-  type NodeName MySchema Person = "Person"
-
-  get node =
-    Person
-      <$> getAttribute @"name" node
-      <*> getAttribute @"age" node
-
-  set node p = do
-    setAttribute @"name" node (pName p)
-    setAttribute @"age" node (age p)
-
-instance IsNode MySchema Activity where
-  type NodeName MySchema Activity = "Activity"
-  get node = Activity <$> getAttribute @"name" node
-  set node a = setAttribute @"name" node (aName a)
-
-instance IsNode MySchema Object where
-  type NodeName MySchema Object = "Object"
-  get node = Object <$> getAttribute @"name" node
-  set node o = setAttribute @"name" node (oName o)
-
-makeUniverse :: Edgy MySchema (Node MySchema Universe)
-makeUniverse = do
-  universe <- bigBang
+bigBang :: Edgy MySchema (Node MySchema Universe)
+bigBang = do
+  universe <- getUniverse
 
   bob <- new Person {pName = "Bob", age = 20}
   jane <- new Person {pName = "Jane", age = 21}
@@ -174,13 +179,14 @@ missingTools person = do
 main :: IO ()
 main =
   getArgs >>= \case
-    ["create"] -> atomicallySync (runEdgy makeUniverse) >> return ()
+    ["create"] -> atomicallySync (runEdgy bigBang) >> return ()
     ["query", name] -> do
-      missingNames <- atomicallySync $ runEdgy $ do
-        universe <- bigBang
-        person <- lookupPerson universe name
-        missing <- missingTools person
-        traverse (getAttribute @"name") missing
+      missingNames <- atomicallySync $
+        runEdgy $ do
+          universe <- getUniverse
+          person <- lookupPerson universe name
+          missing <- missingTools person
+          traverse (getAttribute @"name") missing
       putStrLn $ name ++ " is missing:"
       traverse_ putStrLn missingNames
     _ -> putStrLn "Usage: main [create|query]"

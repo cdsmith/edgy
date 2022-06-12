@@ -24,8 +24,10 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:  Edgy
     other-modules:    Edgy.Cardinality,
+                      Edgy.IsNode,
                       Edgy.Node,
                       Edgy.Schema
+                      Edgy.Operations
     build-depends:    base,
                       binary,
                       bytestring,
