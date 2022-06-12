@@ -9,7 +9,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Node where
+module Edgy.Node where
 
 import Data.Binary (Binary (..))
 import qualified Data.Binary as Binary
@@ -24,7 +24,7 @@ import Data.TCache.DefaultPersistence (Indexable (..), Serializable (..))
 import Data.Type.Equality ((:~:) (..))
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
-import Schema
+import Edgy.Schema
   ( AttributeSpec,
     AttributeType,
     Codomain,

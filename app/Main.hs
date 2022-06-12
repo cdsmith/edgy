@@ -11,30 +11,13 @@
 
 module Main where
 
-import Cardinality (Cardinality (..))
 import Control.Monad (filterM)
 import Control.Monad.Extra (concatMapM)
 import Data.Foldable (traverse_)
 import Data.List ((\\))
 import Data.TCache (atomicallySync)
 import Edgy
-  ( Node,
-    addRelated,
-    bigBang,
-    getAttribute,
-    getRelated,
-    newNode,
-    setAttribute, Edgy, runEdgy
-  )
 import GHC.TypeLits (KnownSymbol, Symbol)
-import Schema
-  ( AttributeSpec (..),
-    HasNode,
-    NodeType (..),
-    RelationId (..),
-    Schema,
-    SchemaDef (..),
-  )
 import System.Environment (getArgs)
 
 class

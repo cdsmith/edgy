@@ -14,7 +14,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Schema
+module Edgy.Schema
   ( -- * Nodes
     NodeType (..),
 
@@ -42,7 +42,7 @@ module Schema
   )
 where
 
-import Cardinality (Cardinality (..), KnownCardinality)
+import Edgy.Cardinality (Cardinality (..), KnownCardinality)
 import Data.Binary (Binary (..))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))

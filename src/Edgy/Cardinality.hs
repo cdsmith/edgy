@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
-module Cardinality
+module Edgy.Cardinality
   ( Cardinality (..),
     Numerous,
     KnownCardinality (..),

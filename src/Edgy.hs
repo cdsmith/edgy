@@ -10,9 +10,12 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Edgy
-  ( Edgy,
+  ( -- * The Edgy monad
+    Edgy,
     runEdgy,
     liftSTM,
+
+    -- * Nodes and operations
     Node,
     bigBang,
     newNode,
@@ -25,10 +28,18 @@ module Edgy
     addRelated,
     removeRelated,
     clearRelated,
+
+    -- * Schema types
+    NodeType (..),
+    RelationId (..),
+    Schema,
+    SchemaDef (..),
+    Cardinality (..),
+    AttributeSpec (..),
+    HasNode,
   )
 where
 
-import Cardinality (Cardinality (..), KnownCardinality (..), Numerous)
 import Control.Monad (forM_)
 import qualified Data.Dependent.Map as DMap
 import Data.Kind (Type)
@@ -46,8 +57,8 @@ import Data.Type.Equality (TestEquality (testEquality), (:~:) (..))
 import Data.Typeable (Proxy (..), Typeable)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
-import GHC.TypeLits (KnownSymbol, Symbol)
-import Node
+import Edgy.Cardinality (Cardinality (..), KnownCardinality (..), Numerous)
+import Edgy.Node
   ( AttributeKey (..),
     AttributeVal (..),
     Node (..),
@@ -56,8 +67,8 @@ import Node
     RelatedVal (..),
     emptyNodeImpl,
   )
-import Schema
-  ( AttributeSpec,
+import Edgy.Schema
+  ( AttributeSpec (..),
     AttributeType,
     Codomain,
     CodomainCardinality,
@@ -71,9 +82,11 @@ import Schema
     RelationId (..),
     RelationSpec (..),
     Schema,
+    SchemaDef (..),
     UniversalSpec,
     foldRelations,
   )
+import GHC.TypeLits (KnownSymbol, Symbol)
 import Type.Reflection (TypeRep, typeRep)
 
 type Edgy :: Schema -> Type -> Type
