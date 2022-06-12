@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -11,7 +12,6 @@
 module Main where
 
 import Cardinality (Cardinality (..))
-import Control.Concurrent.STM (STM)
 import Control.Monad (filterM)
 import Control.Monad.Extra (concatMapM)
 import Data.Foldable (traverse_)
@@ -24,9 +24,9 @@ import Edgy
     getAttribute,
     getRelated,
     newNode,
-    setAttribute,
+    setAttribute, Edgy, runEdgy
   )
-import GHC.TypeLits (Symbol)
+import GHC.TypeLits (KnownSymbol, Symbol)
 import Schema
   ( AttributeSpec (..),
     HasNode,
@@ -43,10 +43,18 @@ class
   where
   type NodeName schema record :: Symbol
 
-  get :: Node schema (DataNode (NodeName schema record)) -> STM record
-  set :: Node schema (DataNode (NodeName schema record)) -> record -> STM ()
+  get ::
+    Node schema (DataNode (NodeName schema record)) ->
+    Edgy schema record
+  set ::
+    Node schema (DataNode (NodeName schema record)) ->
+    record ->
+    Edgy schema ()
 
-  new :: record -> STM (Node schema (DataNode (NodeName schema record)))
+  new ::
+    KnownSymbol (NodeName schema record) =>
+    record ->
+    Edgy schema (Node schema (DataNode (NodeName schema record)))
   new record = do
     node <- newNode
     set node record
@@ -75,19 +83,19 @@ type MySchema =
        '[ Attribute "name" String,
           Attribute "age" Int
         ],
-     DefSymmetric "spouse" (DataNode "Person") Optional,
-     DefDirected "friend" (DataNode "Person") Many (DataNode "Person") Many,
+     DefSymmetric (DataNode "Person") "spouse" Optional,
+     DefDirected Many (DataNode "Person") "friend" Many (DataNode "Person"),
      DefNode
        (DataNode "Activity")
        '[ Attribute "name" String
         ],
-     DefDirected "hobby" (DataNode "Person") Many (DataNode "Activity") Many,
+     DefDirected Many (DataNode "Person") "hobby" Many (DataNode "Activity"),
      DefNode
        (DataNode "Object")
        '[ Attribute "name" String
         ],
-     DefDirected "possession" (DataNode "Person") Many (DataNode "Object") Many,
-     DefDirected "tool" (DataNode "Activity") Many (DataNode "Object") Many
+     DefDirected Many (DataNode "Person") "possession" Many (DataNode "Object"),
+     DefDirected Many (DataNode "Activity") "tool" Many (DataNode "Object")
    ]
 
 instance IsNode MySchema Person where
@@ -112,7 +120,7 @@ instance IsNode MySchema Object where
   get node = Object <$> getAttribute @"name" node
   set node o = setAttribute @"name" node (oName o)
 
-makeUniverse :: STM (Node MySchema Universe)
+makeUniverse :: Edgy MySchema (Node MySchema Universe)
 makeUniverse = do
   universe <- bigBang
 
@@ -120,25 +128,13 @@ makeUniverse = do
   jane <- new Person {pName = "Jane", age = 21}
   jose <- new Person {pName = "Jose", age = 22}
 
-  addRelated @(Existence (DataNode "Person")) universe bob
-  addRelated @(Existence (DataNode "Person")) universe jane
-  addRelated @(Existence (DataNode "Person")) universe jose
-
   poker <- new Activity {aName = "Poker"}
   hiking <- new Activity {aName = "Hiking"}
-
-  addRelated @(Existence (DataNode "Activity")) universe poker
-  addRelated @(Existence (DataNode "Activity")) universe hiking
 
   deckOfCards <- new Object {oName = "Deck of Cards"}
   pokerChips <- new Object {oName = "Poker Chips"}
   trekkingPoles <- new Object {oName = "Trekking Poles"}
   trailMap <- new Object {oName = "Trail Map"}
-
-  addRelated @(Existence (DataNode "Object")) universe deckOfCards
-  addRelated @(Existence (DataNode "Object")) universe pokerChips
-  addRelated @(Existence (DataNode "Object")) universe trekkingPoles
-  addRelated @(Existence (DataNode "Object")) universe trailMap
 
   addRelated @(Explicit "spouse") bob jane
 
@@ -166,9 +162,9 @@ makeUniverse = do
 lookupPerson ::
   Node MySchema Universe ->
   String ->
-  STM (Node MySchema (DataNode "Person"))
+  Edgy MySchema (Node MySchema (DataNode "Person"))
 lookupPerson universe name = do
-  people <- getRelated @(Existence (DataNode "Person")) universe
+  people <- getRelated @(Existence "Person") universe
   matches <- filterM (fmap ((== name) . pName) . get) people
   case matches of
     [person] -> return person
@@ -177,7 +173,7 @@ lookupPerson universe name = do
 
 missingTools ::
   Node MySchema (DataNode "Person") ->
-  STM [Node MySchema (DataNode "Object")]
+  Edgy MySchema [Node MySchema (DataNode "Object")]
 missingTools person = do
   todo <- getRelated @(Explicit "hobby") person
   needed <- concatMapM (getRelated @(Explicit "tool")) todo
@@ -195,9 +191,9 @@ missingTools person = do
 main :: IO ()
 main =
   getArgs >>= \case
-    ["create"] -> atomicallySync makeUniverse >> return ()
+    ["create"] -> atomicallySync (runEdgy makeUniverse) >> return ()
     ["query", name] -> do
-      missingNames <- atomicallySync $ do
+      missingNames <- atomicallySync $ runEdgy $ do
         universe <- bigBang
         person <- lookupPerson universe name
         missing <- missingTools person

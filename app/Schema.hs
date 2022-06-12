@@ -9,10 +9,10 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Schema
   ( -- * Nodes
@@ -29,6 +29,8 @@ module Schema
     DomainCardinality,
     Codomain,
     CodomainCardinality,
+    ExistenceSpec,
+    UniversalSpec,
 
     -- * Schema
     Schema,
@@ -44,10 +46,10 @@ import Cardinality (Cardinality (..), KnownCardinality)
 import Data.Binary (Binary (..))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
+import Data.Type.Equality (testEquality, (:~:) (..))
 import Data.Typeable (Typeable)
 import Data.Void (Void)
 import GHC.TypeLits (ErrorMessage (..), KnownSymbol, Symbol, TypeError)
-import Data.Type.Equality ((:~:)(..), testEquality)
 import Type.Reflection (typeRep)
 
 -- The kind for node types.  There is exactly one node of the type 'Universe',
@@ -66,8 +68,8 @@ type family AttributeType attr where
 data RelationId where
   Explicit :: Symbol -> RelationId
   Inverse :: Symbol -> RelationId
-  Existence :: NodeType -> RelationId
-  Universal :: NodeType -> RelationId
+  Existence :: Symbol -> RelationId
+  Universal :: Symbol -> RelationId
 
 data RelationSpec where
   Relation ::
@@ -77,6 +79,14 @@ data RelationSpec where
     NodeType ->
     Cardinality ->
     RelationSpec
+
+type ExistenceSpec :: Symbol -> RelationSpec
+type ExistenceSpec typeName =
+  Relation (Existence typeName) Universe One (DataNode typeName) Many
+
+type UniversalSpec :: Symbol -> RelationSpec
+type UniversalSpec typeName =
+  Relation (Universal typeName) (DataNode typeName) Many Universe One
 
 type Domain :: RelationSpec -> NodeType
 type family Domain rel where
@@ -102,13 +112,13 @@ type Schema = [SchemaDef]
 data SchemaDef where
   DefNode :: NodeType -> [AttributeSpec] -> SchemaDef
   DefDirected ::
+    Cardinality ->
+    NodeType ->
     Symbol ->
-    NodeType ->
     Cardinality ->
     NodeType ->
-    Cardinality ->
     SchemaDef
-  DefSymmetric :: Symbol -> NodeType -> Cardinality -> SchemaDef
+  DefSymmetric :: NodeType -> Symbol -> Cardinality -> SchemaDef
 
 type KnownSchema :: Schema -> Constraint
 class Typeable schema => KnownSchema schema where
@@ -164,24 +174,30 @@ instance KnownSchema '[] where
   foldRelations _ _ = id
 
 instance
-  (Typeable nodeType, KnownAttrs attrs, KnownSchema schema) =>
-  KnownSchema (DefNode nodeType attrs : schema)
+  {-# OVERLAPS #-}
+  (KnownSymbol typeName, KnownAttrs attrs, KnownSchema schema) =>
+  KnownSchema (DefNode (DataNode typeName) attrs : schema)
   where
   foldAttributes _ (p :: Proxy targetNode) f x =
-    case testEquality (typeRep @nodeType) (typeRep @targetNode) of
+    case testEquality (typeRep @(DataNode typeName)) (typeRep @targetNode) of
       Just Refl -> foldNodeAttributes (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
     foldRelations (Proxy @schema) f (f existence (f universal x))
     where
-      existence =
-        Proxy ::
-          Proxy
-            (Relation (Existence nodeType) Universe One nodeType Many)
-      universal =
-        Proxy ::
-          Proxy
-            (Relation (Universal nodeType) nodeType Many Universe One)
+      existence = Proxy @(ExistenceSpec typeName)
+      universal = Proxy @(UniversalSpec typeName)
+
+instance
+  {-# OVERLAPPABLE #-}
+  (KnownAttrs attrs, KnownSchema schema) =>
+  KnownSchema (DefNode Universe attrs : schema)
+  where
+  foldAttributes _ (p :: Proxy targetNode) f x =
+    case testEquality (typeRep @Universe) (typeRep @targetNode) of
+      Just Refl -> foldNodeAttributes (Proxy @attrs) f x
+      _ -> foldAttributes (Proxy @schema) p f x
+  foldRelations _ = foldRelations (Proxy @schema)
 
 instance
   ( KnownSymbol name,
@@ -191,7 +207,7 @@ instance
     KnownCardinality nb,
     KnownSchema schema
   ) =>
-  KnownSchema (DefDirected name a na b nb : schema)
+  KnownSchema (DefDirected na a name nb b : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
@@ -206,7 +222,7 @@ instance
     KnownCardinality n,
     KnownSchema schema
   ) =>
-  KnownSchema (DefSymmetric name nodeType n : schema)
+  KnownSchema (DefSymmetric nodeType name n : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ f x =
@@ -219,7 +235,7 @@ class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
 
 instance
   {-# OVERLAPS #-}
-  (Typeable nodeType, KnownAttrs attrs, KnownSchema rest) =>
+  (KnownSchema (DefNode nodeType attrs : rest), Typeable nodeType, KnownAttrs attrs) =>
   HasNode (DefNode nodeType attrs : rest) nodeType
 
 instance
@@ -274,14 +290,13 @@ instance
 
 instance
   {-# OVERLAPS #-}
-  ( Typeable nodeType,
-    KnownAttrs attrs,
+  ( KnownSchema (DefNode nodeType attrs : rest),
+    Typeable nodeType,
     KnownSymbol name,
     NodeHasAttribute nodeType attrs name attr,
     Typeable attr,
     Typeable (AttributeType attr),
-    Binary (AttributeType attr),
-    KnownSchema rest
+    Binary (AttributeType attr)
   ) =>
   HasAttribute
     (DefNode nodeType attrs : rest)
@@ -321,25 +336,25 @@ class
 
 instance
   {-# OVERLAPS #-}
-  ( Typeable nodeType,
+  ( KnownSymbol typeName,
     KnownAttrs attrs,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefNode nodeType attrs : rest)
-    (Existence nodeType)
-    (Relation (Existence nodeType) Universe One nodeType Many)
+    (DefNode (DataNode typeName) attrs : rest)
+    (Existence typeName)
+    (ExistenceSpec typeName)
 
 instance
   {-# OVERLAPS #-}
-  ( Typeable nodeType,
+  ( KnownSymbol typeName,
     KnownAttrs attrs,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefNode nodeType attrs : rest)
-    (Universal nodeType)
-    (Relation (Universal nodeType) nodeType Many Universe One)
+    (DefNode (DataNode typeName) attrs : rest)
+    (Universal typeName)
+    (UniversalSpec typeName)
 
 instance
   {-# OVERLAPS #-}
@@ -351,7 +366,7 @@ instance
     KnownSchema rest
   ) =>
   HasRelation
-    (DefDirected name a na b nb : rest)
+    (DefDirected na a name nb b : rest)
     (Explicit name)
     (Relation (Explicit name) a na b nb)
 
@@ -365,7 +380,7 @@ instance
     KnownSchema rest
   ) =>
   HasRelation
-    (DefDirected name a na b nb : rest)
+    (DefDirected na a name nb b : rest)
     (Inverse name)
     (Relation (Inverse name) b nb a na)
 
@@ -377,7 +392,7 @@ instance
     KnownSchema rest
   ) =>
   HasRelation
-    (DefSymmetric name nodeType n : rest)
+    (DefSymmetric nodeType name n : rest)
     (Explicit name)
     (Relation (Explicit name) nodeType n nodeType n)
 

@@ -2,6 +2,7 @@
 {-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Cardinality
   ( Cardinality (..),
@@ -13,7 +14,6 @@ where
 import Data.Kind (Constraint, Type)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
-import Data.Proxy (Proxy)
 import Data.Typeable (Typeable)
 
 data Cardinality = Optional | One | Many | Some
@@ -27,29 +27,29 @@ type family Numerous c t where
 
 type KnownCardinality :: Cardinality -> Constraint
 class Typeable c => KnownCardinality c where
-  toCardinality :: Proxy c -> [a] -> Maybe (Numerous c a)
-  fromCardinality :: Proxy c -> Numerous c a -> [a]
+  listToNumerous :: forall {a}. [a] -> Maybe (Numerous c a)
+  numerousToList :: forall {a}. Numerous c a -> [a]
 
 instance KnownCardinality Optional where
-  toCardinality _ [] = Just Nothing
-  toCardinality _ [x] = Just (Just x)
-  toCardinality _ _ = Nothing
+  listToNumerous [] = Just Nothing
+  listToNumerous [x] = Just (Just x)
+  listToNumerous _ = Nothing
 
-  fromCardinality _ Nothing = []
-  fromCardinality _ (Just x) = [x]
+  numerousToList Nothing = []
+  numerousToList (Just x) = [x]
 
 instance KnownCardinality One where
-  toCardinality _ [x] = Just x
-  toCardinality _ _ = Nothing
+  listToNumerous [x] = Just x
+  listToNumerous _ = Nothing
 
-  fromCardinality _ x = [x]
+  numerousToList x = [x]
 
 instance KnownCardinality Many where
-  toCardinality _ = Just
-  fromCardinality _ = id
+  listToNumerous = Just
+  numerousToList = id
 
 instance KnownCardinality Some where
-  toCardinality _ [] = Nothing
-  toCardinality _ (x : xs) = Just (x :| xs)
+  listToNumerous [] = Nothing
+  listToNumerous (x : xs) = Just (x :| xs)
 
-  fromCardinality _ = NonEmpty.toList
+  numerousToList = NonEmpty.toList
