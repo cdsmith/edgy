@@ -54,7 +54,7 @@ import Edgy.Schema
     UniversalSpec,
     foldRelations,
   )
-import GHC.TypeLits (KnownSymbol, Symbol)
+import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import Type.Reflection (TypeRep, typeRep)
 
 type Edgy :: Schema -> Type -> Type
@@ -75,7 +75,7 @@ getEdges (Node ref) =
       case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
         Just (RelatedVal ns) -> return ns
         Nothing -> return []
-    Nothing -> error "node not found"
+    Nothing -> error ("node not found: " ++ show ref)
 
 modifyEdges ::
   forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
@@ -95,7 +95,7 @@ modifyEdges (Node ref) f =
             Nothing ->
               DMap.insert relatedKey (RelatedVal (f [])) relations
        in writeDBRef ref (NodeImpl uuid attrs relations')
-    Nothing -> error "node not found"
+    Nothing -> error ("node not found: " ++ show ref)
 
 getUniverse :: KnownSchema schema => Edgy schema (Node schema Universe)
 getUniverse = Edgy $ do
@@ -152,8 +152,14 @@ getAttribute (Node ref) = Edgy $ do
     Just (NodeImpl _ attrs _) ->
       case DMap.lookup (AttributeKey (typeRep :: TypeRep attr)) attrs of
         Just (AttributeVal val) -> return val
-        Nothing -> error "getAttribute: attr not found"
-    Nothing -> error "getAttribute: node not found"
+        Nothing ->
+          error
+            ( "getAttribute: attr not found: "
+                ++ symbolVal (Proxy @name)
+                ++ " on "
+                ++ show ref
+            )
+    Nothing -> error ("getAttribute: node not found: " ++ show ref)
 
 setAttribute ::
   forall
@@ -180,7 +186,7 @@ setAttribute (Node ref) value = Edgy $ do
             )
             relations
         )
-    Nothing -> error "setAttribute: node not found"
+    Nothing -> error ("setAttribute: node not found: " ++ show ref)
 
 getRelated ::
   forall
