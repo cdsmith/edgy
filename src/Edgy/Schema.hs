@@ -24,11 +24,8 @@ module Edgy.Schema
 
     -- * Relations
     RelationSpec (..),
-    RelationId (..),
-    Domain,
-    DomainCardinality,
-    Codomain,
-    CodomainCardinality,
+    Target,
+    TargetCardinality,
     ExistenceSpec,
     UniversalSpec,
 
@@ -42,13 +39,13 @@ module Edgy.Schema
   )
 where
 
-import Edgy.Cardinality (Cardinality (..), KnownCardinality)
 import Data.Binary (Binary (..))
 import Data.Kind (Constraint, Type)
 import Data.Proxy (Proxy (..))
 import Data.Type.Equality (testEquality, (:~:) (..))
 import Data.Typeable (Typeable)
 import Data.Void (Void)
+import Edgy.Cardinality (Cardinality (..), KnownCardinality)
 import GHC.TypeLits (ErrorMessage (..), KnownSymbol, Symbol, TypeError)
 import Type.Reflection (typeRep)
 
@@ -59,50 +56,34 @@ data NodeType where
   DataNode :: Symbol -> NodeType
 
 data AttributeSpec where
-  Attribute :: Symbol -> Type -> AttributeSpec
+  (:::) :: Symbol -> Type -> AttributeSpec
 
 type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
-  AttributeType (Attribute _ t) = t
-
-data RelationId where
-  Explicit :: Symbol -> RelationId
-  Inverse :: Symbol -> RelationId
-  Existence :: Symbol -> RelationId
-  Universal :: Symbol -> RelationId
+  AttributeType (_ ::: t) = t
 
 data RelationSpec where
   Relation ::
-    RelationId ->
-    NodeType ->
+    Symbol ->
     Cardinality ->
     NodeType ->
-    Cardinality ->
     RelationSpec
 
 type ExistenceSpec :: Symbol -> RelationSpec
 type ExistenceSpec typeName =
-  Relation (Existence typeName) Universe One (DataNode typeName) Many
+  Relation typeName Many (DataNode typeName)
 
 type UniversalSpec :: Symbol -> RelationSpec
 type UniversalSpec typeName =
-  Relation (Universal typeName) (DataNode typeName) Many Universe One
+  Relation "Universe" One Universe
 
-type Domain :: RelationSpec -> NodeType
-type family Domain rel where
-  Domain (Relation _ nodeType _ _ _) = nodeType
+type Target :: RelationSpec -> NodeType
+type family Target rel where
+  Target (Relation _ _ nodeType) = nodeType
 
-type DomainCardinality :: RelationSpec -> Cardinality
-type family DomainCardinality rel where
-  DomainCardinality (Relation _ _ n _ _) = n
-
-type Codomain :: RelationSpec -> NodeType
-type family Codomain rel where
-  Codomain (Relation _ _ _ nodeType _) = nodeType
-
-type CodomainCardinality :: RelationSpec -> Cardinality
-type family CodomainCardinality rel where
-  CodomainCardinality (Relation _ _ _ _ n) = n
+type TargetCardinality :: RelationSpec -> Cardinality
+type family TargetCardinality rel where
+  TargetCardinality (Relation _ n _) = n
 
 -- | The kind for an edgy schema.  An edgy schema is itself a type, specifying
 -- the node types, attributes, and relations that make up the data model.
@@ -112,13 +93,14 @@ type Schema = [SchemaDef]
 data SchemaDef where
   DefNode :: NodeType -> [AttributeSpec] -> SchemaDef
   DefDirected ::
+    Symbol ->
     Cardinality ->
     NodeType ->
     Symbol ->
     Cardinality ->
     NodeType ->
     SchemaDef
-  DefSymmetric :: NodeType -> Symbol -> Cardinality -> SchemaDef
+  DefSymmetric :: Symbol -> Cardinality -> NodeType -> SchemaDef
 
 type KnownAttrs :: [AttributeSpec] -> Constraint
 class Typeable attrs => KnownAttrs attrs where
@@ -159,15 +141,12 @@ class Typeable schema => KnownSchema schema where
     a ->
     a
   foldRelations ::
+    forall (nodeType :: NodeType) (a :: Type).
+    Typeable nodeType =>
     Proxy schema ->
+    Proxy nodeType ->
     ( forall (relation :: RelationSpec) (inverse :: RelationSpec).
-      ( Typeable relation,
-        Typeable (Domain relation),
-        Typeable (Codomain relation),
-        Typeable inverse,
-        Domain inverse ~ Codomain relation,
-        Codomain inverse ~ Domain relation
-      ) =>
+      (Typeable relation, Typeable (Target relation), Typeable inverse, Typeable (Target inverse)) =>
       Proxy relation ->
       Proxy inverse ->
       a ->
@@ -178,19 +157,25 @@ class Typeable schema => KnownSchema schema where
 
 instance KnownSchema '[] where
   foldAttributes _ _ _ = id
-  foldRelations _ _ = id
+  foldRelations _ _ _ = id
 
 instance
   {-# OVERLAPS #-}
   (KnownSymbol typeName, KnownAttrs attrs, KnownSchema schema) =>
   KnownSchema (DefNode (DataNode typeName) attrs : schema)
   where
-  foldAttributes _ (p :: Proxy targetNode) f x =
-    case testEquality (typeRep @(DataNode typeName)) (typeRep @targetNode) of
+  foldAttributes _ (p :: Proxy fromNode) f x =
+    case testEquality (typeRep @(DataNode typeName)) (typeRep @fromNode) of
       Just Refl -> foldNodeAttributes (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
-  foldRelations _ f x =
-    foldRelations (Proxy @schema) f (f existence universal (f universal existence x))
+  foldRelations _ (p :: Proxy fromNode) f x =
+    let x' = case testEquality (typeRep @(DataNode typeName)) (typeRep @fromNode) of
+          Just Refl -> f universal existence x
+          _ -> x
+        x'' = case testEquality (typeRep @Universe) (typeRep @fromNode) of
+          Just Refl -> f existence universal x'
+          _ -> x'
+     in foldRelations (Proxy @schema) p f x''
     where
       existence = Proxy @(ExistenceSpec typeName)
       universal = Proxy @(UniversalSpec typeName)
@@ -200,28 +185,35 @@ instance
   (KnownAttrs attrs, KnownSchema schema) =>
   KnownSchema (DefNode Universe attrs : schema)
   where
-  foldAttributes _ (p :: Proxy targetNode) f x =
-    case testEquality (typeRep @Universe) (typeRep @targetNode) of
+  foldAttributes _ (p :: Proxy fromNode) f x =
+    case testEquality (typeRep @Universe) (typeRep @fromNode) of
       Just Refl -> foldNodeAttributes (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ = foldRelations (Proxy @schema)
 
 instance
-  ( KnownSymbol name,
-    Typeable a,
-    KnownCardinality na,
-    Typeable b,
-    KnownCardinality nb,
+  ( KnownSymbol fwdName,
+    KnownCardinality fwdCard,
+    Typeable fwdType,
+    KnownSymbol bwdName,
+    KnownCardinality bwdCard,
+    Typeable bwdType,
     KnownSchema schema
   ) =>
-  KnownSchema (DefDirected na a name nb b : schema)
+  KnownSchema (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
-  foldRelations _ f x =
-    foldRelations (Proxy @schema) f (f fwd bwd (f bwd fwd x))
+  foldRelations _ (p :: Proxy fromNode) f x =
+    let x' = case testEquality (typeRep @bwdType) (typeRep @fromNode) of
+          Just Refl -> f fwd bwd x
+          _ -> x
+        x'' = case testEquality (typeRep @fwdType) (typeRep @fromNode) of
+          Just Refl -> f bwd fwd x'
+          _ -> x'
+     in foldRelations (Proxy @schema) p f x''
     where
-      fwd = Proxy @(Relation (Explicit name) a na b nb)
-      bwd = Proxy @(Relation (Inverse name) b nb a na)
+      fwd = Proxy @(Relation fwdName fwdCard fwdType)
+      bwd = Proxy @(Relation bwdName bwdCard bwdType)
 
 instance
   ( KnownSymbol name,
@@ -229,13 +221,16 @@ instance
     KnownCardinality n,
     KnownSchema schema
   ) =>
-  KnownSchema (DefSymmetric nodeType name n : schema)
+  KnownSchema (DefSymmetric name n nodeType : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
-  foldRelations _ f x =
-    foldRelations (Proxy @schema) f (f fwd fwd x)
+  foldRelations _ (p :: Proxy fromNode) f x =
+    let x' = case testEquality (typeRep @nodeType) (typeRep @fromNode) of
+          Just Refl -> f fwd fwd x
+          _ -> x
+     in foldRelations (Proxy @schema) p f x'
     where
-      fwd = Proxy @(Relation (Explicit name) nodeType n nodeType n)
+      fwd = Proxy @(Relation name n nodeType)
 
 type HasNode :: Schema -> NodeType -> Constraint
 class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
@@ -279,9 +274,9 @@ instance
   {-# OVERLAPS #-}
   NodeHasAttribute
     nodeType
-    (Attribute name t : rest)
+    (name ::: t : rest)
     name
-    (Attribute name t)
+    (name ::: t)
 
 instance
   {-# OVERLAPPABLE #-}
@@ -296,7 +291,7 @@ instance
           :<>: ShowType nodeType
       )
   ) =>
-  NodeHasAttribute nodeType '[] name (Attribute name Void)
+  NodeHasAttribute nodeType '[] name (name ::: Void)
 
 instance
   {-# OVERLAPS #-}
@@ -329,32 +324,29 @@ instance
           :<>: ShowType nodeType
       )
   ) =>
-  HasAttribute '[] nodeType name (Attribute name Void)
+  HasAttribute '[] nodeType name (name ::: Void)
 
 type HasRelation ::
   Schema ->
-  RelationId ->
+  NodeType ->
+  Symbol ->
   RelationSpec ->
   RelationSpec ->
   Constraint
 class
   ( KnownSchema schema,
-    Typeable relation,
+    KnownSymbol name,
+    Typeable nodeType,
     Typeable spec,
-    Typeable (Domain spec),
-    KnownCardinality (DomainCardinality spec),
-    Typeable (Codomain spec),
-    KnownCardinality (CodomainCardinality spec),
+    Typeable (Target spec),
+    KnownCardinality (TargetCardinality spec),
     Typeable inverse,
-    Domain inverse ~ Codomain spec,
-    DomainCardinality inverse ~ CodomainCardinality spec,
-    Codomain inverse ~ Domain spec,
-    CodomainCardinality inverse ~ DomainCardinality spec
+    Target inverse ~ nodeType,
+    KnownCardinality (TargetCardinality inverse)
   ) =>
-  HasRelation schema relation spec inverse
-    | schema relation -> spec,
-      schema relation -> inverse,
-      spec -> relation
+  HasRelation schema nodeType name spec inverse
+    | schema nodeType name -> spec,
+      schema nodeType name -> inverse
 
 instance
   {-# OVERLAPS #-}
@@ -364,7 +356,8 @@ instance
   ) =>
   HasRelation
     (DefNode (DataNode typeName) attrs : rest)
-    (Existence typeName)
+    Universe
+    typeName
     (ExistenceSpec typeName)
     (UniversalSpec typeName)
 
@@ -376,39 +369,44 @@ instance
   ) =>
   HasRelation
     (DefNode (DataNode typeName) attrs : rest)
-    (Universal typeName)
+    (DataNode typeName)
+    "Universe"
     (UniversalSpec typeName)
     (ExistenceSpec typeName)
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol name,
-    Typeable a,
-    KnownCardinality na,
-    Typeable b,
-    KnownCardinality nb,
+  ( KnownSymbol fwdName,
+    KnownCardinality fwdCard,
+    Typeable fwdType,
+    KnownSymbol bwdName,
+    KnownCardinality bwdCard,
+    Typeable bwdType,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefDirected na a name nb b : rest)
-    (Explicit name)
-    (Relation (Explicit name) a na b nb)
-    (Relation (Inverse name) b nb a na)
+    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
+    bwdType
+    fwdName
+    (Relation fwdName fwdCard fwdType)
+    (Relation bwdName bwdCard bwdType)
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol name,
-    Typeable a,
-    KnownCardinality na,
-    Typeable b,
-    KnownCardinality nb,
+  ( KnownSymbol fwdName,
+    KnownCardinality fwdCard,
+    Typeable fwdType,
+    KnownSymbol bwdName,
+    KnownCardinality bwdCard,
+    Typeable bwdType,
     KnownSchema rest
   ) =>
   HasRelation
-    (DefDirected na a name nb b : rest)
-    (Inverse name)
-    (Relation (Inverse name) b nb a na)
-    (Relation (Explicit name) a na b nb)
+    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
+    fwdType
+    bwdName
+    (Relation bwdName bwdCard bwdType)
+    (Relation fwdName fwdCard fwdType)
 
 instance
   {-# OVERLAPS #-}
@@ -418,22 +416,25 @@ instance
     KnownSchema rest
   ) =>
   HasRelation
-    (DefSymmetric nodeType name n : rest)
-    (Explicit name)
-    (Relation (Explicit name) nodeType n nodeType n)
-    (Relation (Explicit name) nodeType n nodeType n)
+    (DefSymmetric name n nodeType : rest)
+    nodeType
+    name
+    (Relation name n nodeType)
+    (Relation name n nodeType)
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasRelation rest relation spec inverse) =>
-  HasRelation (def : rest) relation spec inverse
+  (KnownSchema (def : rest), HasRelation rest nodeType name spec inverse) =>
+  HasRelation (def : rest) nodeType name spec inverse
 
 instance
-  ( Typeable relation,
-    TypeError (Text "Relation missing from schema: " :<>: ShowType relation)
+  ( KnownSymbol relation,
+    Typeable nodeType,
+    TypeError (Text "Relation missing from schema: " :<>: Text relation :<>: Text " on " :<>: ShowType nodeType)
   ) =>
   HasRelation
     '[]
+    nodeType
     relation
-    (Relation relation Universe One Universe One)
-    (Relation relation Universe One Universe One)
+    (Relation relation One Universe)
+    (Relation relation One nodeType)

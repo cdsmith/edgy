@@ -27,11 +27,11 @@ import Data.UUID (UUID)
 import Edgy.Schema
   ( AttributeSpec,
     AttributeType,
-    Codomain,
     KnownSchema (..),
     NodeType (..),
     RelationSpec (..),
     Schema,
+    Target
   )
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 import Type.Reflection.Unsafe (typeRepFingerprint)
@@ -107,11 +107,11 @@ instance GCompare (RelatedKey schema) where
 type RelatedVal :: Schema -> RelationSpec -> Type
 data RelatedVal schema relation where
   RelatedVal ::
-    [Node schema (Codomain relation)] ->
+    [Node schema (Target relation)] ->
     RelatedVal schema relation
 
 instance
-  (KnownSchema schema, Typeable (Codomain relation)) =>
+  (KnownSchema schema, Typeable (Target relation)) =>
   Binary (RelatedVal schema relation)
   where
   put (RelatedVal ns) = put ns
@@ -161,6 +161,7 @@ instance
     put $
       foldRelations
         (Proxy :: Proxy schema)
+        (Proxy :: Proxy nodeType)
         ( \(_ :: Proxy relation) _ m ->
             let tr = typeRep :: TypeRep relation
                 k = RelatedKey tr
@@ -201,6 +202,7 @@ instance
     let relations =
           foldRelations
             (Proxy :: Proxy schema)
+            (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy relation) _ m ->
                 let tr = typeRep :: TypeRep relation
                     k = RelatedKey tr

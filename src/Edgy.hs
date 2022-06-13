@@ -31,7 +31,6 @@ module Edgy
 
     -- * Schema types
     NodeType (..),
-    RelationId (..),
     Schema,
     SchemaDef (..),
     Cardinality (..),
@@ -69,7 +68,6 @@ import Edgy.Schema
     HasNode,
     HasRelation,
     NodeType (..),
-    RelationId (..),
     Schema,
     SchemaDef (..),
   )

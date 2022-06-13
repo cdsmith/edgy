@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Main where
 
@@ -23,7 +24,6 @@ import Edgy
     IsNode (..),
     Node,
     NodeType (..),
-    RelationId (..),
     SchemaDef (..),
     addRelated,
     getAttribute,
@@ -42,8 +42,8 @@ data Person = Person
 
 instance
   ( HasNode schema (DataNode "Person"),
-    HasAttribute schema (DataNode "Person") "name" (Attribute "name" String),
-    HasAttribute schema (DataNode "Person") "age" (Attribute "age" Int)
+    HasAttribute schema (DataNode "Person") "name" ("name" ::: String),
+    HasAttribute schema (DataNode "Person") "age" ("age" ::: Int)
   ) =>
   IsNode schema Person
   where
@@ -65,7 +65,7 @@ data Activity = Activity
 
 instance
   ( HasNode schema (DataNode "Activity"),
-    HasAttribute schema (DataNode "Activity") "name" (Attribute "name" String)
+    HasAttribute schema (DataNode "Activity") "name" ("name" ::: String)
   ) =>
   IsNode schema Activity
   where
@@ -80,7 +80,7 @@ data Object = Object
 
 instance
   ( HasNode schema (DataNode "Object"),
-    HasAttribute schema (DataNode "Object") "name" (Attribute "name" String)
+    HasAttribute schema (DataNode "Object") "name" ("name" ::: String)
   ) =>
   IsNode schema Object
   where
@@ -89,23 +89,23 @@ instance
   set node o = setAttribute @"name" node (oName o)
 
 type MySchema =
-  '[ DefSymmetric (DataNode "Person") "spouse" Optional,
-     DefDirected Many (DataNode "Person") "friend" Many (DataNode "Person"),
-     DefDirected Many (DataNode "Person") "hobby" Many (DataNode "Activity"),
-     DefDirected Many (DataNode "Person") "possession" Many (DataNode "Object"),
-     DefDirected Many (DataNode "Activity") "tool" Many (DataNode "Object"),
+  '[ DefSymmetric "spouse" Optional (DataNode "Person"),
+     DefDirected "friend" Many (DataNode "Person") "friendOf" Many (DataNode "Person"),
+     DefDirected "hobby" Many (DataNode "Activity") "enthusiast" Many (DataNode "Person"),
+     DefDirected "possession" Many (DataNode "Object") "owner" Many (DataNode "Person"),
+     DefDirected "tool" Many (DataNode "Object") "application" Many (DataNode "Activity"),
      DefNode
        (DataNode "Person")
-       '[ Attribute "name" String,
-          Attribute "age" Int
+       '[ "name" ::: String,
+          "age" ::: Int
         ],
      DefNode
        (DataNode "Activity")
-       '[ Attribute "name" String
+       '[ "name" ::: String
         ],
      DefNode
        (DataNode "Object")
-       '[ Attribute "name" String
+       '[ "name" ::: String
         ]
    ]
 
@@ -153,7 +153,7 @@ lookupPerson ::
   String ->
   Edgy MySchema (Node MySchema (DataNode "Person"))
 lookupPerson universe name = do
-  people <- getRelated @(Existence "Person") universe
+  people <- getRelated @"Person" universe
   matches <- filterM (fmap ((== name) . pName) . get) people
   case matches of
     [person] -> return person
@@ -165,7 +165,7 @@ lookupObject ::
   String ->
   Edgy MySchema (Node MySchema (DataNode "Object"))
 lookupObject universe name = do
-  objs <- getRelated @(Existence "Object") universe
+  objs <- getRelated @"Object" universe
   matches <- filterM (fmap ((== name) . oName) . get) objs
   case matches of
     [obj] -> return obj
@@ -176,15 +176,15 @@ missingTools ::
   Node MySchema (DataNode "Person") ->
   Edgy MySchema [Node MySchema (DataNode "Object")]
 missingTools person = do
-  todo <- getRelated @(Explicit "hobby") person
-  needed <- concatMapM (getRelated @(Explicit "tool")) todo
-  friends <- getRelated @(Explicit "friend") person
+  todo <- getRelated @"hobby" person
+  needed <- concatMapM (getRelated @"tool") todo
+  friends <- getRelated @"friend" person
   available <-
     (++)
       <$> concatMapM
-        (getRelated @(Explicit "possession"))
+        (getRelated @"possession")
         friends
-      <*> getRelated @(Explicit "possession") person
+      <*> getRelated @"possession" person
   return (needed \\ available)
 
 ----------------------------------------
