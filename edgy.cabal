@@ -54,4 +54,3 @@ executable edgy-demo
     hs-source-dirs:   app
     default-language: Haskell2010
     ghc-options:      -Wall -Wno-unticked-promoted-constructors
-                      -fsimpl-tick-factor=5000

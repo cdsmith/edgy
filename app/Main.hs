@@ -89,12 +89,7 @@ instance
   set node o = setAttribute @"name" node (oName o)
 
 type MySchema =
-  '[ DefSymmetric "spouse" Optional (DataNode "Person"),
-     DefDirected "friend" Many (DataNode "Person") "friendOf" Many (DataNode "Person"),
-     DefDirected "hobby" Many (DataNode "Activity") "enthusiast" Many (DataNode "Person"),
-     DefDirected "possession" Many (DataNode "Object") "owner" Many (DataNode "Person"),
-     DefDirected "tool" Many (DataNode "Object") "application" Many (DataNode "Activity"),
-     DefNode
+  '[ DefNode
        (DataNode "Person")
        '[ "name" ::: String,
           "age" ::: Int
@@ -106,8 +101,13 @@ type MySchema =
      DefNode
        (DataNode "Object")
        '[ "name" ::: String
-        ]
-   ]
+        ],
+     DefSymmetric "spouse" Optional (DataNode "Person"),
+     DefDirected "friend" Many (DataNode "Person") "friendOf" Many (DataNode "Person"),
+     DefDirected "hobby" Many (DataNode "Activity") "enthusiast" Many (DataNode "Person"),
+     DefDirected "possession" Many (DataNode "Object") "owner" Many (DataNode "Person"),
+     DefDirected "tool" Many (DataNode "Object") "application" Many (DataNode "Activity")
+  ]
 
 bigBang :: Edgy MySchema (Node MySchema Universe)
 bigBang = do

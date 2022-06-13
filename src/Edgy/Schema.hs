@@ -236,14 +236,18 @@ type HasNode :: Schema -> NodeType -> Constraint
 class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
 
 instance
-  {-# OVERLAPS #-}
-  (KnownSchema (DefNode nodeType attrs : rest), Typeable nodeType, KnownAttrs attrs) =>
-  HasNode (DefNode nodeType attrs : rest) nodeType
+  (KnownSchema schema, Typeable nodeType, NodeLookup schema nodeType) =>
+  HasNode schema nodeType
+
+type NodeLookup :: Schema -> NodeType -> Constraint
+class NodeLookup schema nodeType
+
+instance {-# OVERLAPS #-} NodeLookup (DefNode nodeType attrs : rest) nodeType
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasNode rest nodeType) =>
-  HasNode (def : rest) nodeType
+  NodeLookup rest nodeType =>
+  NodeLookup (def : rest) nodeType
 
 instance
   ( Typeable nodeType,
@@ -263,16 +267,27 @@ class
   HasAttribute schema nodeType name attr
     | schema nodeType name -> attr
 
-type NodeHasAttribute ::
+instance
+  ( KnownSchema schema,
+    Typeable nodeType,
+    KnownSymbol name,
+    Typeable attr,
+    Typeable (AttributeType attr),
+    Binary (AttributeType attr),
+    AttributeLookup schema nodeType name attr
+  ) =>
+  HasAttribute schema nodeType name attr
+
+type NodeAttributeLookup ::
   NodeType -> [AttributeSpec] -> Symbol -> AttributeSpec -> Constraint
 class
-  NodeHasAttribute nodeType attrs name attr
+  NodeAttributeLookup nodeType attrs name attr
     | attrs name -> attr,
       attr -> name
 
 instance
   {-# OVERLAPS #-}
-  NodeHasAttribute
+  NodeAttributeLookup
     nodeType
     (name ::: t : rest)
     name
@@ -280,8 +295,8 @@ instance
 
 instance
   {-# OVERLAPPABLE #-}
-  NodeHasAttribute nodeType rest name attr =>
-  NodeHasAttribute nodeType (other : rest) name attr
+  NodeAttributeLookup nodeType rest name attr =>
+  NodeAttributeLookup nodeType (other : rest) name attr
 
 instance
   ( TypeError
@@ -291,40 +306,34 @@ instance
           :<>: ShowType nodeType
       )
   ) =>
-  NodeHasAttribute nodeType '[] name (name ::: Void)
+  NodeAttributeLookup nodeType '[] name (name ::: Void)
+
+type AttributeLookup ::
+  Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
+class
+  AttributeLookup schema nodeType name attr
+    | schema nodeType name -> attr,
+      attr -> name
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSchema (DefNode nodeType attrs : rest),
-    Typeable nodeType,
-    KnownSymbol name,
-    NodeHasAttribute nodeType attrs name attr,
-    Typeable attr,
-    Typeable (AttributeType attr),
-    Binary (AttributeType attr)
-  ) =>
-  HasAttribute
-    (DefNode nodeType attrs : rest)
-    nodeType
-    name
-    attr
+  NodeAttributeLookup nodeType attrs name attr =>
+  AttributeLookup (DefNode nodeType attrs : rest) nodeType name attr
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasAttribute rest nodeType name attr) =>
-  HasAttribute (def : rest) nodeType name attr
+  AttributeLookup rest nodeType name attr =>
+  AttributeLookup (def : rest) nodeType name attr
 
 instance
-  ( Typeable nodeType,
-    KnownSymbol name,
-    TypeError
+  ( TypeError
       ( Text "Attribute missing from schema: "
           :<>: Text name
           :<>: Text " on "
           :<>: ShowType nodeType
       )
   ) =>
-  HasAttribute '[] nodeType name (name ::: Void)
+  AttributeLookup '[] nodeType name (name ::: Void)
 
 type HasRelation ::
   Schema ->
@@ -349,12 +358,29 @@ class
       schema nodeType name -> inverse
 
 instance
-  {-# OVERLAPS #-}
-  ( KnownSymbol typeName,
-    KnownAttrs attrs,
-    KnownSchema rest
+  ( KnownSchema schema,
+    KnownSymbol name,
+    Typeable nodeType,
+    Typeable spec,
+    Typeable (Target spec),
+    KnownCardinality (TargetCardinality spec),
+    Typeable inverse,
+    Target inverse ~ nodeType,
+    KnownCardinality (TargetCardinality inverse),
+    RelationLookup schema nodeType name spec inverse
   ) =>
-  HasRelation
+  HasRelation schema nodeType name spec inverse
+
+type RelationLookup ::
+  Schema -> NodeType -> Symbol -> RelationSpec -> RelationSpec -> Constraint
+class
+  RelationLookup schema nodeType name spec inverse
+    | schema nodeType name -> spec,
+      schema nodeType name -> inverse
+
+instance
+  {-# OVERLAPS #-}
+  RelationLookup
     (DefNode (DataNode typeName) attrs : rest)
     Universe
     typeName
@@ -363,11 +389,7 @@ instance
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol typeName,
-    KnownAttrs attrs,
-    KnownSchema rest
-  ) =>
-  HasRelation
+  RelationLookup
     (DefNode (DataNode typeName) attrs : rest)
     (DataNode typeName)
     "Universe"
@@ -376,15 +398,7 @@ instance
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol fwdName,
-    KnownCardinality fwdCard,
-    Typeable fwdType,
-    KnownSymbol bwdName,
-    KnownCardinality bwdCard,
-    Typeable bwdType,
-    KnownSchema rest
-  ) =>
-  HasRelation
+  RelationLookup
     (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
     bwdType
     fwdName
@@ -393,15 +407,7 @@ instance
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol fwdName,
-    KnownCardinality fwdCard,
-    Typeable fwdType,
-    KnownSymbol bwdName,
-    KnownCardinality bwdCard,
-    Typeable bwdType,
-    KnownSchema rest
-  ) =>
-  HasRelation
+  RelationLookup
     (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
     fwdType
     bwdName
@@ -410,12 +416,7 @@ instance
 
 instance
   {-# OVERLAPS #-}
-  ( KnownSymbol name,
-    Typeable nodeType,
-    KnownCardinality n,
-    KnownSchema rest
-  ) =>
-  HasRelation
+  RelationLookup
     (DefSymmetric name n nodeType : rest)
     nodeType
     name
@@ -424,15 +425,18 @@ instance
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownSchema (def : rest), HasRelation rest nodeType name spec inverse) =>
-  HasRelation (def : rest) nodeType name spec inverse
+  RelationLookup rest nodeType name spec inverse =>
+  RelationLookup (def : rest) nodeType name spec inverse
 
 instance
-  ( KnownSymbol relation,
-    Typeable nodeType,
-    TypeError (Text "Relation missing from schema: " :<>: Text relation :<>: Text " on " :<>: ShowType nodeType)
+  ( TypeError
+      ( Text "Relation missing from schema: "
+          :<>: Text relation
+          :<>: Text " on "
+          :<>: ShowType nodeType
+      )
   ) =>
-  HasRelation
+  RelationLookup
     '[]
     nodeType
     relation
