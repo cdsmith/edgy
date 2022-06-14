@@ -46,6 +46,10 @@ data RelationSpec where
     NodeType ->
     RelationSpec
 
+type RelationName :: RelationSpec -> Symbol
+type family RelationName relation where
+  RelationName (Relation s _ _) = s
+
 type ExistenceSpec :: Symbol -> RelationSpec
 type ExistenceSpec typeName =
   Relation typeName Many (DataNode typeName)
@@ -123,7 +127,13 @@ class Typeable schema => KnownSchema schema where
     Proxy schema ->
     Proxy nodeType ->
     ( forall (relation :: RelationSpec) (inverse :: RelationSpec).
-      (Typeable relation, Typeable (Target relation), Typeable inverse, Typeable (Target inverse)) =>
+      ( Typeable relation,
+        KnownSymbol (RelationName relation),
+        Typeable (Target relation),
+        Typeable inverse,
+        KnownSymbol (RelationName inverse),
+        Typeable (Target inverse)
+      ) =>
       Proxy relation ->
       Proxy inverse ->
       a ->
@@ -327,9 +337,11 @@ class
     KnownSymbol name,
     Typeable nodeType,
     Typeable spec,
+    KnownSymbol (RelationName spec),
     Typeable (Target spec),
     KnownCardinality (TargetCardinality spec),
     Typeable inverse,
+    KnownSymbol (RelationName inverse),
     Target inverse ~ nodeType,
     KnownCardinality (TargetCardinality inverse)
   ) =>
@@ -341,9 +353,11 @@ instance
     KnownSymbol name,
     Typeable nodeType,
     Typeable spec,
+    KnownSymbol (RelationName spec),
     Typeable (Target spec),
     KnownCardinality (TargetCardinality spec),
     Typeable inverse,
+    KnownSymbol (RelationName inverse),
     Target inverse ~ nodeType,
     KnownCardinality (TargetCardinality inverse),
     RelationLookup schema nodeType name spec inverse mutable

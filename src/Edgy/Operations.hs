@@ -34,6 +34,7 @@ import Edgy.Node
     AttributeVal (..),
     Node (..),
     NodeImpl (..),
+    Nodes (..),
     RelatedKey (..),
     RelatedVal (..),
     emptyNodeImpl,
@@ -48,6 +49,7 @@ import Edgy.Schema
     KnownSchema,
     Mutability (..),
     NodeType (..),
+    RelationName,
     RelationSpec (..),
     Schema,
     Target,
@@ -67,35 +69,55 @@ liftSTM = Edgy
 
 getEdges ::
   forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
-  (KnownSchema schema, Typeable spec, Typeable nodeType) =>
+  ( KnownSchema schema,
+    Typeable nodeType,
+    Typeable spec,
+    KnownSymbol (RelationName spec),
+    Typeable (Target spec)
+  ) =>
   Node schema nodeType ->
   STM [Node schema (Target spec)]
 getEdges (Node ref) =
   readDBRef ref >>= \case
     Just (NodeImpl _ _ relations) ->
       case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
-        Just (RelatedVal ns) -> return ns
+        Just (RelatedVal nref) ->
+          readDBRef nref >>= \case
+            Just (Nodes _ ns) -> return ns
+            Nothing -> error ("nodes not found: " ++ show nref)
         Nothing -> return []
     Nothing -> error ("node not found: " ++ show ref)
 
 modifyEdges ::
   forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
-  (KnownSchema schema, Typeable spec, Typeable nodeType) =>
+  ( KnownSchema schema,
+    Typeable nodeType,
+    Typeable spec,
+    KnownSymbol (RelationName spec),
+    Typeable (Target spec)
+  ) =>
   Node schema nodeType ->
   ([Node schema (Target spec)] -> [Node schema (Target spec)]) ->
   STM ()
 modifyEdges (Node ref) f =
   readDBRef ref >>= \case
-    Just (NodeImpl uuid attrs relations) ->
-      let relatedKey =
-            RelatedKey
-              (typeRep :: TypeRep spec)
-          relations' = case DMap.lookup relatedKey relations of
-            Just (RelatedVal targets) ->
-              DMap.insert relatedKey (RelatedVal (f targets)) relations
-            Nothing ->
-              DMap.insert relatedKey (RelatedVal (f [])) relations
-       in writeDBRef ref (NodeImpl uuid attrs relations')
+    Just (NodeImpl uuid attrs relations) -> do
+      let relatedKey = RelatedKey (typeRep :: TypeRep spec)
+      nref <- case DMap.lookup relatedKey relations of
+        Just (RelatedVal nref) -> return nref
+        Nothing -> do
+          nref <- newDBRef (Nodes uuid [])
+          writeDBRef
+            ref
+            ( NodeImpl
+                uuid
+                attrs
+                (DMap.insert relatedKey (RelatedVal nref) relations)
+            )
+          return nref
+      readDBRef nref >>= \case
+        Just (Nodes _ ns) -> writeDBRef nref (Nodes uuid (f ns))
+        Nothing -> error ("nodes not found: " ++ show nref)
     Nothing -> error ("node not found: " ++ show ref)
 
 getUniverse :: KnownSchema schema => Edgy schema (Node schema Universe)

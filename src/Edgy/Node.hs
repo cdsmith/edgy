@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Edgy.Node where
@@ -29,10 +30,12 @@ import Edgy.Schema
     AttributeType,
     KnownSchema (..),
     NodeType (..),
+    RelationName,
     RelationSpec (..),
     Schema,
-    Target
+    Target,
   )
+import GHC.TypeLits (KnownSymbol, symbolVal)
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 import Type.Reflection.Unsafe (typeRepFingerprint)
 
@@ -104,18 +107,37 @@ instance GCompare (RelatedKey schema) where
     GEQ -> GEQ
     GGT -> GGT
 
-type RelatedVal :: Schema -> RelationSpec -> Type
-data RelatedVal schema relation where
-  RelatedVal ::
-    [Node schema (Target relation)] ->
-    RelatedVal schema relation
+data Nodes schema relation = Nodes UUID [Node schema (Target relation)]
+
+instance KnownSymbol (RelationName relation) => Indexable (Nodes schema relation) where
+  key (Nodes uuid _) =
+    show uuid ++ "." ++ symbolVal (Proxy @(RelationName relation))
 
 instance
   (KnownSchema schema, Typeable (Target relation)) =>
+  Serializable (Nodes schema relation)
+  where
+  serialize (Nodes uuid nodes) = Binary.encode (uuid, nodes)
+  deserialize = do
+    (uuid, nodes) <- Binary.decode
+    pure $ Nodes uuid nodes
+
+type RelatedVal :: Schema -> RelationSpec -> Type
+data RelatedVal schema relation where
+  RelatedVal ::
+    DBRef (Nodes schema relation) ->
+    RelatedVal schema relation
+
+instance
+  ( KnownSchema schema,
+    Typeable relation,
+    KnownSymbol (RelationName relation),
+    Typeable (Target relation)
+  ) =>
   Binary (RelatedVal schema relation)
   where
-  put (RelatedVal ns) = put ns
-  get = RelatedVal <$> get
+  put (RelatedVal ref) = put (show ref)
+  get = RelatedVal . read <$> get
 
 type NodeImpl :: Schema -> NodeType -> Type
 data NodeImpl schema nodeType
@@ -166,10 +188,10 @@ instance
             let tr = typeRep :: TypeRep relation
                 k = RelatedKey tr
              in case DMap.lookup k relations of
-                  Just (RelatedVal ns) ->
+                  Just nodes ->
                     Map.insert
                       (Binary.encode (typeRepFingerprint tr, show tr))
-                      (Binary.encode ns)
+                      (Binary.encode nodes)
                       m
                   Nothing -> m
         )
@@ -210,10 +232,7 @@ instance
                       (Binary.encode (typeRepFingerprint tr, show tr))
                       relMap of
                       Just val ->
-                        DMap.insert
-                          k
-                          (RelatedVal (Binary.decode val))
-                          m
+                        DMap.insert k (Binary.decode val) m
                       Nothing -> m
             )
             DMap.empty
