@@ -46,6 +46,7 @@ import Edgy.Schema
     HasNode,
     HasRelation,
     KnownSchema,
+    Mutability (..),
     NodeType (..),
     RelationSpec (..),
     Schema,
@@ -126,7 +127,9 @@ deleteNode node@(Node ref) = Edgy $ do
     (Proxy @schema)
     (Proxy @(DataNode typeName))
     ( \(_ :: Proxy relation) (_ :: Proxy inverse) delRemaining -> do
-        case testEquality (typeRep @(DataNode typeName)) (typeRep @(Target inverse)) of
+        case testEquality
+          (typeRep @(DataNode typeName))
+          (typeRep @(Target inverse)) of
           Just Refl -> do
             nodes <- getEdges @relation node
             forM_ nodes $ \n -> do
@@ -194,8 +197,9 @@ getRelated ::
     {schema :: Schema}
     {nodeType :: NodeType}
     {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+    {inverse :: RelationSpec}
+    {mutability :: Mutability}.
+  HasRelation schema nodeType relation spec inverse mutability =>
   Node schema nodeType ->
   Edgy schema (Numerous (TargetCardinality spec) (Node schema (Target spec)))
 getRelated node = Edgy $ do
@@ -209,8 +213,9 @@ isRelated ::
     {schema :: Schema}
     {nodeType :: NodeType}
     {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+    {inverse :: RelationSpec}
+    {mutability :: Mutability}.
+  HasRelation schema nodeType relation spec inverse mutability =>
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema Bool
@@ -223,7 +228,7 @@ setRelated ::
     {nodeType :: NodeType}
     {spec :: RelationSpec}
     {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+  HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Numerous (TargetCardinality spec) (Node schema (Target spec)) ->
   Edgy schema ()
@@ -241,7 +246,7 @@ addRelated ::
     {nodeType :: NodeType}
     {spec :: RelationSpec}
     {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+  HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema ()
@@ -256,7 +261,7 @@ removeRelated ::
     {nodeType :: NodeType}
     {spec :: RelationSpec}
     {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+  HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema ()
@@ -271,7 +276,7 @@ clearRelated ::
     {nodeType :: NodeType}
     {spec :: RelationSpec}
     {inverse :: RelationSpec}.
-  HasRelation schema nodeType relation spec inverse =>
+  HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Edgy schema ()
 clearRelated node = Edgy $ do

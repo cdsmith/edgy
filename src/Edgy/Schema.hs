@@ -14,30 +14,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Edgy.Schema
-  ( -- * Nodes
-    NodeType (..),
-
-    -- * Attributes
-    AttributeSpec (..),
-    AttributeType,
-
-    -- * Relations
-    RelationSpec (..),
-    Target,
-    TargetCardinality,
-    ExistenceSpec,
-    UniversalSpec,
-
-    -- * Schema
-    Schema,
-    SchemaDef (..),
-    KnownSchema (..),
-    HasNode,
-    HasRelation,
-    HasAttribute,
-  )
-where
+module Edgy.Schema where
 
 import Data.Binary (Binary (..))
 import Data.Kind (Constraint, Type)
@@ -335,12 +312,15 @@ instance
   ) =>
   AttributeLookup '[] nodeType name (name ::: Void)
 
+data Mutability = Mutable | Immutable
+
 type HasRelation ::
   Schema ->
   NodeType ->
   Symbol ->
   RelationSpec ->
   RelationSpec ->
+  Mutability ->
   Constraint
 class
   ( KnownSchema schema,
@@ -353,9 +333,8 @@ class
     Target inverse ~ nodeType,
     KnownCardinality (TargetCardinality inverse)
   ) =>
-  HasRelation schema nodeType name spec inverse
-    | schema nodeType name -> spec,
-      schema nodeType name -> inverse
+  HasRelation schema nodeType name spec inverse mutable
+    | schema nodeType name -> spec inverse mutable
 
 instance
   ( KnownSchema schema,
@@ -367,66 +346,81 @@ instance
     Typeable inverse,
     Target inverse ~ nodeType,
     KnownCardinality (TargetCardinality inverse),
-    RelationLookup schema nodeType name spec inverse
+    RelationLookup schema nodeType name spec inverse mutable
   ) =>
-  HasRelation schema nodeType name spec inverse
+  HasRelation schema nodeType name spec inverse mutable
 
 type RelationLookup ::
-  Schema -> NodeType -> Symbol -> RelationSpec -> RelationSpec -> Constraint
+  Schema ->
+  NodeType ->
+  Symbol ->
+  RelationSpec ->
+  RelationSpec ->
+  Mutability ->
+  Constraint
 class
-  RelationLookup schema nodeType name spec inverse
-    | schema nodeType name -> spec,
-      schema nodeType name -> inverse
+  RelationLookup schema nodeType name spec inverse mutable
+    | schema nodeType name -> spec inverse mutable
 
 instance
   {-# OVERLAPS #-}
+  (mutability ~ Immutable) =>
   RelationLookup
     (DefNode (DataNode typeName) attrs : rest)
     Universe
     typeName
     (ExistenceSpec typeName)
     (UniversalSpec typeName)
+    mutability
 
 instance
   {-# OVERLAPS #-}
+  (mutability ~ Immutable) =>
   RelationLookup
     (DefNode (DataNode typeName) attrs : rest)
     (DataNode typeName)
     "Universe"
     (UniversalSpec typeName)
     (ExistenceSpec typeName)
+    mutability
 
 instance
   {-# OVERLAPS #-}
+  (mutability ~ Mutable) =>
   RelationLookup
     (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
     bwdType
     fwdName
     (Relation fwdName fwdCard fwdType)
     (Relation bwdName bwdCard bwdType)
+    mutability
 
 instance
   {-# OVERLAPS #-}
+  (mutability ~ Mutable) =>
   RelationLookup
     (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
     fwdType
     bwdName
     (Relation bwdName bwdCard bwdType)
     (Relation fwdName fwdCard fwdType)
+    mutability
 
 instance
   {-# OVERLAPS #-}
+  (mutability ~ Mutable) =>
   RelationLookup
     (DefSymmetric name n nodeType : rest)
     nodeType
     name
     (Relation name n nodeType)
     (Relation name n nodeType)
+    mutability
 
 instance
   {-# OVERLAPPABLE #-}
-  RelationLookup rest nodeType name spec inverse =>
-  RelationLookup (def : rest) nodeType name spec inverse
+  RelationLookup rest nodeType name spec inverse mutability =>
+  RelationLookup (def : rest) nodeType name spec inverse mutability
 
 instance
   ( TypeError
@@ -442,3 +436,4 @@ instance
     relation
     (Relation relation One Universe)
     (Relation relation One nodeType)
+    Immutable
