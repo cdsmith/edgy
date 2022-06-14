@@ -109,9 +109,20 @@ instance GCompare (RelatedKey schema) where
 
 data Nodes schema relation = Nodes UUID [Node schema (Target relation)]
 
-instance KnownSymbol (RelationName relation) => Indexable (Nodes schema relation) where
-  key (Nodes uuid _) =
-    show uuid ++ "." ++ symbolVal (Proxy @(RelationName relation))
+relatedKey ::
+  forall (relation :: RelationSpec).
+  KnownSymbol (RelationName relation) =>
+  UUID ->
+  Proxy relation ->
+  String
+relatedKey uuid _ =
+  show uuid ++ "." ++ symbolVal (Proxy @(RelationName relation))
+
+instance
+  KnownSymbol (RelationName relation) =>
+  Indexable (Nodes schema relation)
+  where
+  key (Nodes uuid _) = relatedKey uuid (Proxy @relation)
 
 instance
   (KnownSchema schema, Typeable (Target relation)) =>
@@ -160,9 +171,8 @@ instance
   (KnownSchema schema, Typeable nodeType) =>
   Binary (NodeImpl schema nodeType)
   where
-  put (NodeImpl uuid attrs relations) = do
+  put (NodeImpl uuid attrs _) = do
     put uuid
-
     put $
       foldAttributes
         (Proxy :: Proxy schema)
@@ -180,26 +190,8 @@ instance
         )
         mempty
 
-    put $
-      foldRelations
-        (Proxy :: Proxy schema)
-        (Proxy :: Proxy nodeType)
-        ( \(_ :: Proxy relation) _ m ->
-            let tr = typeRep :: TypeRep relation
-                k = RelatedKey tr
-             in case DMap.lookup k relations of
-                  Just nodes ->
-                    Map.insert
-                      (Binary.encode (typeRepFingerprint tr, show tr))
-                      (Binary.encode nodes)
-                      m
-                  Nothing -> m
-        )
-        mempty
-
   get = do
     uuid <- get
-
     attrMap <- get
     let attrs =
           foldAttributes
@@ -219,25 +211,7 @@ instance
                       Nothing -> m
             )
             DMap.empty
-
-    relMap <- get
-    let relations =
-          foldRelations
-            (Proxy :: Proxy schema)
-            (Proxy :: Proxy nodeType)
-            ( \(_ :: Proxy relation) _ m ->
-                let tr = typeRep :: TypeRep relation
-                    k = RelatedKey tr
-                 in case Map.lookup
-                      (Binary.encode (typeRepFingerprint tr, show tr))
-                      relMap of
-                      Just val ->
-                        DMap.insert k (Binary.decode val) m
-                      Nothing -> m
-            )
-            DMap.empty
-
-    pure (NodeImpl uuid attrs relations)
+    pure (NodeImpl uuid attrs DMap.empty)
 
 emptyNodeImpl :: UUID -> NodeImpl schema nodeType
 emptyNodeImpl uuid = NodeImpl uuid DMap.empty DMap.empty

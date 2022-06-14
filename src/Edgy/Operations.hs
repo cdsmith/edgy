@@ -38,6 +38,7 @@ import Edgy.Node
     RelatedKey (..),
     RelatedVal (..),
     emptyNodeImpl,
+    relatedKey,
   )
 import Edgy.Schema
   ( AttributeSpec (..),
@@ -79,12 +80,13 @@ getEdges ::
   STM [Node schema (Target spec)]
 getEdges (Node ref) =
   readDBRef ref >>= \case
-    Just (NodeImpl _ _ relations) ->
-      case DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations of
-        Just (RelatedVal nref) ->
-          readDBRef nref >>= \case
-            Just (Nodes _ ns) -> return ns
-            Nothing -> error ("nodes not found: " ++ show nref)
+    Just (NodeImpl uuid _ relations) -> do
+      let result = DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations
+          nref = case result of
+            Just (RelatedVal r) -> r
+            Nothing -> getDBRef (relatedKey uuid (Proxy @spec))
+      readDBRef nref >>= \case
+        Just (Nodes _ ns) -> return ns
         Nothing -> return []
     Nothing -> error ("node not found: " ++ show ref)
 
@@ -102,22 +104,18 @@ modifyEdges ::
 modifyEdges (Node ref) f =
   readDBRef ref >>= \case
     Just (NodeImpl uuid attrs relations) -> do
-      let relatedKey = RelatedKey (typeRep :: TypeRep spec)
-      nref <- case DMap.lookup relatedKey relations of
+      let rkey = RelatedKey (typeRep :: TypeRep spec)
+      nref <- case DMap.lookup rkey relations of
         Just (RelatedVal nref) -> return nref
         Nothing -> do
-          nref <- newDBRef (Nodes uuid [])
+          let nref = getDBRef (relatedKey uuid (Proxy @spec))
           writeDBRef
             ref
-            ( NodeImpl
-                uuid
-                attrs
-                (DMap.insert relatedKey (RelatedVal nref) relations)
-            )
+            (NodeImpl uuid attrs (DMap.insert rkey (RelatedVal nref) relations))
           return nref
       readDBRef nref >>= \case
         Just (Nodes _ ns) -> writeDBRef nref (Nodes uuid (f ns))
-        Nothing -> error ("nodes not found: " ++ show nref)
+        Nothing -> writeDBRef nref (Nodes uuid (f []))
     Nothing -> error ("node not found: " ++ show ref)
 
 getUniverse :: KnownSchema schema => Edgy schema (Node schema Universe)
