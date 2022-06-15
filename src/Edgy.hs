@@ -35,6 +35,7 @@ module Edgy
     SchemaDef (..),
     Cardinality (..),
     AttributeSpec (..),
+    AttributeType,
     HasNode,
     HasAttribute,
     HasRelation,
@@ -50,11 +51,11 @@ import Edgy.Node (Node)
 import Edgy.Operations
   ( Edgy (runEdgy),
     addRelated,
-    getUniverse,
     clearRelated,
     deleteNode,
     getAttribute,
     getRelated,
+    getUniverse,
     isRelated,
     liftSTM,
     newNode,
@@ -64,6 +65,7 @@ import Edgy.Operations
   )
 import Edgy.Schema
   ( AttributeSpec (..),
+    AttributeType,
     HasAttribute,
     HasNode,
     HasRelation,

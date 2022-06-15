@@ -56,6 +56,7 @@ import Edgy.Schema
     Target,
     TargetCardinality,
     UniversalSpec,
+    attributeDefault,
     foldRelations,
   )
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
@@ -175,13 +176,15 @@ getAttribute (Node ref) = Edgy $ do
     Just (NodeImpl _ attrs _) ->
       case DMap.lookup (AttributeKey (typeRep :: TypeRep attr)) attrs of
         Just (AttributeVal val) -> return val
-        Nothing ->
-          error
-            ( "getAttribute: attr not found: "
-                ++ symbolVal (Proxy @name)
-                ++ " on "
-                ++ show ref
-            )
+        Nothing -> case attributeDefault (Proxy @schema) (Proxy @nodeType) (Proxy @name) of
+          Just def -> return def
+          Nothing ->
+            error
+              ( "getAttribute: Required attribute not defined: "
+                  ++ symbolVal (Proxy @name)
+                  ++ " on "
+                  ++ show ref
+              )
     Nothing -> error ("getAttribute: node not found: " ++ show ref)
 
 setAttribute ::

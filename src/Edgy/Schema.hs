@@ -34,10 +34,12 @@ data NodeType where
 
 data AttributeSpec where
   (:::) :: Symbol -> Type -> AttributeSpec
+  (::?) :: Symbol -> Type -> AttributeSpec
 
 type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
   AttributeType (_ ::: t) = t
+  AttributeType (_ ::? t) = t
 
 data RelationSpec where
   Relation ::
@@ -253,6 +255,12 @@ class
   ) =>
   HasAttribute schema nodeType name attr
     | schema nodeType name -> attr
+  where
+  attributeDefault ::
+    Proxy schema ->
+    Proxy nodeType ->
+    Proxy name ->
+    Maybe (AttributeType attr)
 
 instance
   ( KnownSchema schema,
@@ -264,6 +272,8 @@ instance
     AttributeLookup schema nodeType name attr
   ) =>
   HasAttribute schema nodeType name attr
+  where
+  attributeDefault = attributeLookupDefault
 
 type NodeAttributeLookup ::
   NodeType -> [AttributeSpec] -> Symbol -> AttributeSpec -> Constraint
@@ -271,6 +281,12 @@ class
   NodeAttributeLookup nodeType attrs name attr
     | attrs name -> attr,
       attr -> name
+  where
+  nodeAttributeLookupDefault ::
+    Proxy nodeType ->
+    Proxy attrs ->
+    Proxy name ->
+    Maybe (AttributeType attr)
 
 instance
   {-# OVERLAPS #-}
@@ -279,11 +295,27 @@ instance
     (name ::: t : rest)
     name
     (name ::: t)
+  where
+  nodeAttributeLookupDefault _ _ _ = Nothing
+
+instance
+  {-# OVERLAPS #-}
+  Monoid t =>
+  NodeAttributeLookup
+    nodeType
+    (name ::? t : rest)
+    name
+    (name ::? t)
+  where
+  nodeAttributeLookupDefault _ _ _ = Just mempty
 
 instance
   {-# OVERLAPPABLE #-}
   NodeAttributeLookup nodeType rest name attr =>
   NodeAttributeLookup nodeType (other : rest) name attr
+  where
+  nodeAttributeLookupDefault pNodeType _ pName =
+    nodeAttributeLookupDefault pNodeType (Proxy @rest) pName
 
 instance
   ( TypeError
@@ -294,6 +326,8 @@ instance
       )
   ) =>
   NodeAttributeLookup nodeType '[] name (name ::: Void)
+  where
+  nodeAttributeLookupDefault = undefined
 
 type AttributeLookup ::
   Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
@@ -301,26 +335,34 @@ class
   AttributeLookup schema nodeType name attr
     | schema nodeType name -> attr,
       attr -> name
+  where
+  attributeLookupDefault ::
+    Proxy schema ->
+    Proxy nodeType ->
+    Proxy name ->
+    Maybe (AttributeType attr)
 
 instance
   {-# OVERLAPS #-}
   NodeAttributeLookup nodeType attrs name attr =>
   AttributeLookup (DefNode nodeType attrs : rest) nodeType name attr
+  where
+  attributeLookupDefault _ pNodeType pName =
+    nodeAttributeLookupDefault pNodeType (Proxy @attrs) pName
 
 instance
   {-# OVERLAPPABLE #-}
   AttributeLookup rest nodeType name attr =>
   AttributeLookup (def : rest) nodeType name attr
+  where
+  attributeLookupDefault _ pNodeType pName =
+    attributeLookupDefault (Proxy @rest) pNodeType pName
 
 instance
-  ( TypeError
-      ( Text "Attribute missing from schema: "
-          :<>: Text name
-          :<>: Text " on "
-          :<>: ShowType nodeType
-      )
-  ) =>
+  TypeError (Text "Node type missing from schema: " :<>: ShowType nodeType) =>
   AttributeLookup '[] nodeType name (name ::: Void)
+  where
+  attributeLookupDefault = undefined
 
 data Mutability = Mutable | Immutable
 

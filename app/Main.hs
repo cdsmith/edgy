@@ -5,8 +5,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Main where
 
@@ -17,6 +17,7 @@ import Data.List ((\\))
 import Data.TCache (atomicallySync)
 import Edgy
   ( AttributeSpec (..),
+    AttributeType,
     Cardinality (..),
     Edgy (..),
     HasAttribute,
@@ -42,8 +43,10 @@ data Person = Person
 
 instance
   ( HasNode schema (DataNode "Person"),
-    HasAttribute schema (DataNode "Person") "name" ("name" ::: String),
-    HasAttribute schema (DataNode "Person") "age" ("age" ::: Int)
+    HasAttribute schema (DataNode "Person") "name" nameAttr,
+    AttributeType nameAttr ~ String,
+    HasAttribute schema (DataNode "Person") "age" ageAttr,
+    AttributeType ageAttr ~ Int
   ) =>
   IsNode schema Person
   where
@@ -65,7 +68,8 @@ data Activity = Activity
 
 instance
   ( HasNode schema (DataNode "Activity"),
-    HasAttribute schema (DataNode "Activity") "name" ("name" ::: String)
+    HasAttribute schema (DataNode "Activity") "name" nameAttr,
+    AttributeType nameAttr ~ String
   ) =>
   IsNode schema Activity
   where
@@ -80,7 +84,8 @@ data Object = Object
 
 instance
   ( HasNode schema (DataNode "Object"),
-    HasAttribute schema (DataNode "Object") "name" ("name" ::: String)
+    HasAttribute schema (DataNode "Object") "name" nameAttr,
+    AttributeType nameAttr ~ String
   ) =>
   IsNode schema Object
   where
@@ -107,7 +112,7 @@ type MySchema =
      DefDirected "hobby" Many (DataNode "Activity") "enthusiast" Many (DataNode "Person"),
      DefDirected "possession" Many (DataNode "Object") "owner" Many (DataNode "Person"),
      DefDirected "tool" Many (DataNode "Object") "application" Many (DataNode "Activity")
-  ]
+   ]
 
 bigBang :: Edgy MySchema (Node MySchema Universe)
 bigBang = do
