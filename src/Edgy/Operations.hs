@@ -12,6 +12,8 @@
 module Edgy.Operations where
 
 import Control.Monad (forM_)
+import Data.Binary (Binary)
+import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Kind (Type)
 import Data.List ((\\))
@@ -43,6 +45,7 @@ import Edgy.Node
 import Edgy.Schema
   ( AttributeSpec (..),
     AttributeType,
+    Constructor,
     ExistenceSpec,
     HasAttribute,
     HasNode,
@@ -57,7 +60,9 @@ import Edgy.Schema
     TargetCardinality,
     UniversalSpec,
     attributeDefault,
+    foldConstructor,
     foldRelations,
+    mapConstructor,
   )
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import Type.Reflection (TypeRep, typeRep)
@@ -127,20 +132,34 @@ getUniverse = Edgy $ do
     Nothing -> Node <$> newDBRef (emptyNodeImpl UUID.nil)
 
 newNode ::
-  forall (typeName :: Symbol) {schema :: Schema}.
-  (KnownSymbol typeName, HasNode schema (DataNode typeName)) =>
-  Edgy schema (Node schema (DataNode typeName))
-newNode = Edgy $ do
-  uuid <- safeIOToSTM UUID.nextRandom
-  node <- Node <$> newDBRef (emptyNodeImpl uuid)
-  let universe = Node (getDBRef (show UUID.nil)) :: Node schema Universe
-  modifyEdges @(ExistenceSpec typeName) universe (node :)
-  modifyEdges @(UniversalSpec typeName) node (const [universe])
-  return node
+  forall (schema :: Schema) (typeName :: Symbol) {attrs :: [AttributeSpec]}.
+  (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
+  Constructor attrs (Edgy schema (Node schema (DataNode typeName)))
+newNode =
+  mapConstructor (Proxy @attrs) mkNode $
+    (foldConstructor (Proxy @attrs) setAttr DMap.empty)
+  where
+    setAttr ::
+      forall (attr :: AttributeSpec).
+      (Typeable attr, Binary (AttributeType attr)) =>
+      Proxy attr ->
+      AttributeType attr ->
+      DMap (AttributeKey schema) (AttributeVal schema) ->
+      DMap (AttributeKey schema) (AttributeVal schema)
+    setAttr (_ :: Proxy attr) val attrs =
+      DMap.insert (AttributeKey @attr @schema typeRep) (AttributeVal val) attrs
+
+    mkNode attrs = Edgy @schema $ do
+      uuid <- safeIOToSTM UUID.nextRandom
+      node <- Node <$> newDBRef (NodeImpl uuid attrs DMap.empty)
+      let universe = Node (getDBRef (show UUID.nil)) :: Node schema Universe
+      modifyEdges @(ExistenceSpec typeName) universe (node :)
+      modifyEdges @(UniversalSpec typeName) node (const [universe])
+      return node
 
 deleteNode ::
-  forall (typeName :: Symbol) {schema :: Schema}.
-  (KnownSymbol typeName, HasNode schema (DataNode typeName)) =>
+  forall (typeName :: Symbol) {schema :: Schema} {attrs :: [AttributeSpec]}.
+  (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
   Node schema (DataNode typeName) ->
   Edgy schema ()
 deleteNode node@(Node ref) = Edgy $ do

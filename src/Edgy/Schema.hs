@@ -98,15 +98,50 @@ class Typeable attrs => KnownAttrs attrs where
     a ->
     a
 
+  foldConstructor ::
+    Proxy attrs ->
+    ( forall (attr :: AttributeSpec).
+      (Typeable attr, Binary (AttributeType attr)) =>
+      Proxy attr ->
+      AttributeType attr ->
+      a ->
+      a
+    ) ->
+    a ->
+    Constructor attrs a
+
+  mapConstructor ::
+    Proxy attrs ->
+    (a -> b) ->
+    Constructor attrs a ->
+    Constructor attrs b
+
 instance KnownAttrs '[] where
   foldNodeAttributes _ _ = id
+  foldConstructor _ _ = id
+  mapConstructor _ f = f
 
 instance
-  (Typeable attr, Binary (AttributeType attr), KnownAttrs attrs) =>
-  KnownAttrs (attr : attrs)
+  (KnownSymbol name, Typeable t, Binary t, KnownAttrs attrs) =>
+  KnownAttrs ((name ::: t) : attrs)
   where
   foldNodeAttributes _ f x =
-    foldNodeAttributes (Proxy @attrs) f (f (Proxy @attr) x)
+    foldNodeAttributes (Proxy @attrs) f (f (Proxy @(name ::: t)) x)
+  foldConstructor _ f x v =
+    foldConstructor
+      (Proxy @attrs)
+      f
+      (f (Proxy @(name ::: t)) v x)
+  mapConstructor _ f = fmap (mapConstructor (Proxy @attrs) f)
+
+instance
+  (KnownSymbol name, Typeable t, Binary t, KnownAttrs attrs) =>
+  KnownAttrs ((name ::? t) : attrs)
+  where
+  foldNodeAttributes _ f x =
+    foldNodeAttributes (Proxy @attrs) f (f (Proxy @(name ::? t)) x)
+  foldConstructor _ = foldConstructor (Proxy @attrs)
+  mapConstructor _ f = mapConstructor (Proxy @attrs) f
 
 type KnownSchema :: Schema -> Constraint
 class Typeable schema => KnownSchema schema where
@@ -158,7 +193,9 @@ instance
       Just Refl -> foldNodeAttributes (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ (p :: Proxy fromNode) f x =
-    let x' = case testEquality (typeRep @(DataNode typeName)) (typeRep @fromNode) of
+    let x' = case testEquality
+          (typeRep @(DataNode typeName))
+          (typeRep @fromNode) of
           Just Refl -> f universal existence x
           _ -> x
         x'' = case testEquality (typeRep @Universe) (typeRep @fromNode) of
@@ -189,7 +226,8 @@ instance
     Typeable bwdType,
     KnownSchema schema
   ) =>
-  KnownSchema (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : schema)
+  KnownSchema
+    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ (p :: Proxy fromNode) f x =
@@ -221,28 +259,46 @@ instance
     where
       fwd = Proxy @(Relation name n nodeType)
 
-type HasNode :: Schema -> NodeType -> Constraint
-class (KnownSchema schema, Typeable nodeType) => HasNode schema nodeType
+type Constructor :: [AttributeSpec] -> Type -> Type
+type family Constructor attrs t where
+  Constructor ((_ ::: param) : attrs) t = param -> Constructor attrs t
+  Constructor (_ : attrs) t = Constructor attrs t
+  Constructor '[] t = t
+
+type HasNode :: Schema -> NodeType -> [AttributeSpec] -> Constraint
+class
+  (KnownSchema schema, Typeable nodeType, KnownAttrs attrs) =>
+  HasNode schema nodeType attrs
+    | schema nodeType -> attrs
 
 instance
-  (KnownSchema schema, Typeable nodeType, NodeLookup schema nodeType) =>
-  HasNode schema nodeType
+  ( KnownSchema schema,
+    Typeable nodeType,
+    KnownAttrs attrs,
+    NodeLookup schema nodeType attrs
+  ) =>
+  HasNode schema nodeType attrs
 
-type NodeLookup :: Schema -> NodeType -> Constraint
-class NodeLookup schema nodeType
+type NodeLookup :: Schema -> NodeType -> [AttributeSpec] -> Constraint
+class NodeLookup schema nodeType attrs | schema nodeType -> attrs
 
-instance {-# OVERLAPS #-} NodeLookup (DefNode nodeType attrs : rest) nodeType
+instance
+  {-# OVERLAPS #-}
+  NodeLookup
+    (DefNode nodeType attrs : rest)
+    nodeType
+    attrs
 
 instance
   {-# OVERLAPPABLE #-}
-  NodeLookup rest nodeType =>
-  NodeLookup (def : rest) nodeType
+  NodeLookup rest nodeType attrs =>
+  NodeLookup (def : rest) nodeType attrs
 
 instance
   ( Typeable nodeType,
     TypeError (Text "Node type missing from schema: " :<>: ShowType nodeType)
   ) =>
-  HasNode '[] nodeType
+  HasNode '[] nodeType '[]
 
 type HasAttribute :: Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
 class

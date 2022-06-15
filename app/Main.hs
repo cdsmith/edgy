@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -14,25 +15,30 @@ import Control.Monad (filterM)
 import Control.Monad.Extra (concatMapM)
 import Data.Foldable (traverse_)
 import Data.List ((\\))
+import Data.Proxy (Proxy (..))
 import Data.TCache (atomicallySync)
 import Edgy
   ( AttributeSpec (..),
-    AttributeType,
     Cardinality (..),
     Edgy (..),
     HasAttribute,
-    HasNode,
-    IsNode (..),
+    HasRelation,
+    Mutability,
     Node,
     NodeType (..),
+    RelationSpec,
+    Schema,
     SchemaDef (..),
+    Target,
+    TargetCardinality,
     addRelated,
     getAttribute,
     getRelated,
     getUniverse,
+    newNode,
     removeRelated,
-    setAttribute,
   )
+import GHC.TypeLits (Symbol, symbolVal)
 import System.Environment (getArgs)
 
 data Person = Person
@@ -41,57 +47,15 @@ data Person = Person
   }
   deriving (Show)
 
-instance
-  ( HasNode schema (DataNode "Person"),
-    HasAttribute schema (DataNode "Person") "name" nameAttr,
-    AttributeType nameAttr ~ String,
-    HasAttribute schema (DataNode "Person") "age" ageAttr,
-    AttributeType ageAttr ~ Int
-  ) =>
-  IsNode schema Person
-  where
-  type NodeName schema Person = "Person"
-
-  get node =
-    Person
-      <$> getAttribute @"name" node
-      <*> getAttribute @"age" node
-
-  set node p = do
-    setAttribute @"name" node (pName p)
-    setAttribute @"age" node (age p)
-
 data Activity = Activity
   { aName :: String
   }
   deriving (Show)
 
-instance
-  ( HasNode schema (DataNode "Activity"),
-    HasAttribute schema (DataNode "Activity") "name" nameAttr,
-    AttributeType nameAttr ~ String
-  ) =>
-  IsNode schema Activity
-  where
-  type NodeName schema Activity = "Activity"
-  get node = Activity <$> getAttribute @"name" node
-  set node a = setAttribute @"name" node (aName a)
-
 data Object = Object
   { oName :: String
   }
   deriving (Show)
-
-instance
-  ( HasNode schema (DataNode "Object"),
-    HasAttribute schema (DataNode "Object") "name" nameAttr,
-    AttributeType nameAttr ~ String
-  ) =>
-  IsNode schema Object
-  where
-  type NodeName schema Object = "Object"
-  get node = Object <$> getAttribute @"name" node
-  set node o = setAttribute @"name" node (oName o)
 
 type MySchema =
   '[ DefNode
@@ -118,17 +82,17 @@ bigBang :: Edgy MySchema (Node MySchema Universe)
 bigBang = do
   universe <- getUniverse
 
-  bob <- new Person {pName = "Bob", age = 20}
-  jane <- new Person {pName = "Jane", age = 21}
-  jose <- new Person {pName = "Jose", age = 22}
+  bob <- newNode @MySchema @"Person" "Bob" 20
+  jane <- newNode @MySchema @"Person" "Jane" 21
+  jose <- newNode @MySchema @"Person" "Jose" 22
 
-  poker <- new Activity {aName = "Poker"}
-  hiking <- new Activity {aName = "Hiking"}
+  poker <- newNode @MySchema @"Activity" "Poker"
+  hiking <- newNode @MySchema @"Activity" "Hiking"
 
-  deckOfCards <- new Object {oName = "Deck of Cards"}
-  pokerChips <- new Object {oName = "Poker Chips"}
-  trekkingPoles <- new Object {oName = "Trekking Poles"}
-  trailMap <- new Object {oName = "Trail Map"}
+  deckOfCards <- newNode @MySchema @"Object" "Deck of Cards"
+  pokerChips <- newNode @MySchema @"Object" "Poker Chips"
+  trekkingPoles <- newNode @MySchema @"Object" "Trekking Poles"
+  trailMap <- newNode @MySchema @"Object" "Trail Map"
 
   addRelated @"spouse" bob jane
 
@@ -153,29 +117,35 @@ bigBang = do
 
   return universe
 
-lookupPerson ::
-  Node MySchema Universe ->
+lookupByName ::
+  forall
+    (typeName :: Symbol)
+    {schema :: Schema}
+    {spec :: RelationSpec}
+    {inverse :: RelationSpec}
+    {mutability :: Mutability}.
+  ( HasRelation schema Universe typeName spec inverse mutability,
+    HasAttribute schema (DataNode typeName) "name" ("name" ::: String),
+    Target spec ~ DataNode typeName,
+    TargetCardinality spec ~ Many
+  ) =>
   String ->
-  Edgy MySchema (Node MySchema (DataNode "Person"))
-lookupPerson universe name = do
-  people <- getRelated @"Person" universe
-  matches <- filterM (fmap ((== name) . pName) . get) people
-  case matches of
-    [person] -> return person
-    [] -> error $ "No person named " ++ name
-    _ -> error $ "Multiple people named " ++ name
+  Edgy schema (Node schema (DataNode typeName))
+lookupByName name = do
+  universe <- getUniverse
+  nodes <-
+    getRelated @typeName universe
+      >>= filterM (fmap (== name) . getAttribute @"name")
+  case nodes of
+    [node] -> return node
+    [] -> error $ "No " ++ symbolVal (Proxy @typeName) ++ " named " ++ name
+    _ -> error $ "Multiple " ++ symbolVal (Proxy @typeName) ++ " named " ++ name
 
-lookupObject ::
-  Node MySchema Universe ->
-  String ->
-  Edgy MySchema (Node MySchema (DataNode "Object"))
-lookupObject universe name = do
-  objs <- getRelated @"Object" universe
-  matches <- filterM (fmap ((== name) . oName) . get) objs
-  case matches of
-    [obj] -> return obj
-    [] -> error $ "No object named " ++ name
-    _ -> error $ "Multiple objects named " ++ name
+lookupPerson :: String -> Edgy MySchema (Node MySchema (DataNode "Person"))
+lookupPerson = lookupByName
+
+lookupObject :: String -> Edgy MySchema (Node MySchema (DataNode "Object"))
+lookupObject = lookupByName
 
 missingTools ::
   Node MySchema (DataNode "Person") ->
@@ -201,46 +171,39 @@ main =
     ["query", name] -> do
       missingNames <- atomicallySync $
         runEdgy $ do
-          universe <- getUniverse
-          person <- lookupPerson universe name
+          person <- lookupPerson name
           missing <- missingTools person
           traverse (getAttribute @"name") missing
       putStrLn $ name ++ " is missing:"
       traverse_ putStrLn missingNames
     ["buy", name, tool] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person <- lookupPerson universe name
-        object <- lookupObject universe tool
+        person <- lookupPerson name
+        object <- lookupObject tool
         addRelated @"possession" person object
     ["discard", name, tool] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person <- lookupPerson universe name
-        object <- lookupObject universe tool
+        person <- lookupPerson name
+        object <- lookupObject tool
         removeRelated @"possession" person object
     ["friend", name1, name2] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person1 <- lookupPerson universe name1
-        person2 <- lookupPerson universe name2
+        person1 <- lookupPerson name1
+        person2 <- lookupPerson name2
         addRelated @"friend" person1 person2
     ["unfriend", name1, name2] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person1 <- lookupPerson universe name1
-        person2 <- lookupPerson universe name2
+        person1 <- lookupPerson name1
+        person2 <- lookupPerson name2
         removeRelated @"friend" person1 person2
     ["marry", name1, name2] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person1 <- lookupPerson universe name1
-        person2 <- lookupPerson universe name2
+        person1 <- lookupPerson name1
+        person2 <- lookupPerson name2
         addRelated @"spouse" person1 person2
     ["divorce", name1, name2] -> atomicallySync $
       runEdgy $ do
-        universe <- getUniverse
-        person1 <- lookupPerson universe name1
-        person2 <- lookupPerson universe name2
+        person1 <- lookupPerson name1
+        person2 <- lookupPerson name2
         removeRelated @"spouse" person1 person2
     _ -> putStrLn "Usage: main [cmd]"

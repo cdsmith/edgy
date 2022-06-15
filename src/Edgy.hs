@@ -34,19 +34,20 @@ module Edgy
     Schema,
     SchemaDef (..),
     Cardinality (..),
+    Numerous,
     AttributeSpec (..),
     AttributeType,
+    RelationSpec (..),
+    Target,
+    TargetCardinality,
+    Mutability (..),
     HasNode,
     HasAttribute,
     HasRelation,
-
-    -- * The IsNode class
-    IsNode (..),
   )
 where
 
-import Edgy.Cardinality (Cardinality (..))
-import Edgy.IsNode (IsNode (..))
+import Edgy.Cardinality (Cardinality (..), Numerous)
 import Edgy.Node (Node)
 import Edgy.Operations
   ( Edgy (runEdgy),
@@ -69,7 +70,11 @@ import Edgy.Schema
     HasAttribute,
     HasNode,
     HasRelation,
+    Mutability (..),
     NodeType (..),
+    RelationSpec (..),
     Schema,
     SchemaDef (..),
+    Target,
+    TargetCardinality,
   )
