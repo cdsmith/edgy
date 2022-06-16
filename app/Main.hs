@@ -26,7 +26,7 @@ import Edgy
     Mutability,
     Node,
     NodeType (..),
-    RelationSpec,
+    RelationSpec (..),
     Schema,
     SchemaDef (..),
     Target,
@@ -71,11 +71,20 @@ type MySchema =
        (DataNode "Object")
        '[ "name" ::: String
         ],
-     DefSymmetric "spouse" Optional (DataNode "Person"),
-     DefDirected "friend" Many (DataNode "Person") "friendOf" Many (DataNode "Person"),
-     DefDirected "hobby" Many (DataNode "Activity") "enthusiast" Many (DataNode "Person"),
-     DefDirected "possession" Many (DataNode "Object") "owner" Many (DataNode "Person"),
-     DefDirected "tool" Many (DataNode "Object") "application" Many (DataNode "Activity")
+     DefSymmetric
+       (Relation "spouse" Optional (DataNode "Person")),
+     DefDirected
+       (Relation "friend" Many (DataNode "Person"))
+       (Relation "friendOf" Many (DataNode "Person")),
+     DefDirected
+       (Relation "hobby" Many (DataNode "Activity"))
+       (Relation "enthusiast" Many (DataNode "Person")),
+     DefDirected
+       (Relation "possession" Many (DataNode "Object"))
+       (Relation "owner" Many (DataNode "Person")),
+     DefDirected
+       (Relation "tool" Many (DataNode "Object"))
+       (Relation "application" Many (DataNode "Activity"))
    ]
 
 bigBang :: Edgy MySchema (Node MySchema Universe)

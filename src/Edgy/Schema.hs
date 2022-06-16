@@ -75,15 +75,8 @@ type Schema = [SchemaDef]
 -- | The kind for a single definition in an edgy schema.
 data SchemaDef where
   DefNode :: NodeType -> [AttributeSpec] -> SchemaDef
-  DefDirected ::
-    Symbol ->
-    Cardinality ->
-    NodeType ->
-    Symbol ->
-    Cardinality ->
-    NodeType ->
-    SchemaDef
-  DefSymmetric :: Symbol -> Cardinality -> NodeType -> SchemaDef
+  DefDirected :: RelationSpec -> RelationSpec -> SchemaDef
+  DefSymmetric :: RelationSpec -> SchemaDef
 
 type KnownAttrs :: [AttributeSpec] -> Constraint
 class Typeable attrs => KnownAttrs attrs where
@@ -227,7 +220,11 @@ instance
     KnownSchema schema
   ) =>
   KnownSchema
-    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : schema)
+    ( DefDirected
+        (Relation fwdName fwdCard fwdType)
+        (Relation bwdName bwdCard bwdType)
+        : schema
+    )
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ (p :: Proxy fromNode) f x =
@@ -248,7 +245,7 @@ instance
     KnownCardinality n,
     KnownSchema schema
   ) =>
-  KnownSchema (DefSymmetric name n nodeType : schema)
+  KnownSchema (DefSymmetric (Relation name n nodeType) : schema)
   where
   foldAttributes _ p f x = foldAttributes (Proxy @schema) p f x
   foldRelations _ (p :: Proxy fromNode) f x =
@@ -500,7 +497,11 @@ instance
   {-# OVERLAPS #-}
   (mutability ~ Mutable) =>
   RelationLookup
-    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
+    ( DefDirected
+        (Relation fwdName fwdCard fwdType)
+        (Relation bwdName bwdCard bwdType)
+        : rest
+    )
     bwdType
     fwdName
     (Relation fwdName fwdCard fwdType)
@@ -511,7 +512,11 @@ instance
   {-# OVERLAPS #-}
   (mutability ~ Mutable) =>
   RelationLookup
-    (DefDirected fwdName fwdCard fwdType bwdName bwdCard bwdType : rest)
+    ( DefDirected
+        (Relation fwdName fwdCard fwdType)
+        (Relation bwdName bwdCard bwdType)
+        : rest
+    )
     fwdType
     bwdName
     (Relation bwdName bwdCard bwdType)
@@ -522,7 +527,7 @@ instance
   {-# OVERLAPS #-}
   (mutability ~ Mutable) =>
   RelationLookup
-    (DefSymmetric name n nodeType : rest)
+    (DefSymmetric (Relation name n nodeType) : rest)
     nodeType
     name
     (Relation name n nodeType)
