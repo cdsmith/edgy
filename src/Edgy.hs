@@ -13,7 +13,6 @@ module Edgy
   ( -- * The Edgy monad
     Edgy,
     runEdgy,
-    liftSTM,
 
     -- * Nodes and operations
     Node,
@@ -59,7 +58,6 @@ import Edgy.Operations
     getRelated,
     getUniverse,
     isRelated,
-    liftSTM,
     newNode,
     removeRelated,
     setAttribute,

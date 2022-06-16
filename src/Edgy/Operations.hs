@@ -12,6 +12,7 @@
 module Edgy.Operations where
 
 import Control.Monad (forM_)
+import Control.Monad.STM.Class (MonadSTM (..))
 import Data.Binary (Binary)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -71,8 +72,8 @@ type Edgy :: Schema -> Type -> Type
 newtype Edgy schema a = Edgy {runEdgy :: STM a}
   deriving (Functor, Applicative, Monad)
 
-liftSTM :: forall (schema :: Schema) {a}. STM a -> Edgy schema a
-liftSTM = Edgy
+instance MonadSTM (Edgy schema) where
+  liftSTM = Edgy
 
 getEdges ::
   forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.

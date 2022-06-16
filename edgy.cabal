@@ -30,12 +30,11 @@ library
     build-depends:    base,
                       binary,
                       bytestring,
-                      constraints-extras,
                       containers,
                       dependent-map,
+                      monad-stm,
                       stm,
                       some,
-                      text,
                       uuid,
                       TCache
     hs-source-dirs:   src
