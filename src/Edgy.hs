@@ -44,6 +44,7 @@ module Edgy
     HasNode,
     HasAttribute,
     HasRelation,
+    SchemaValidator (..),
   )
 where
 
@@ -75,6 +76,7 @@ import Edgy.Schema
     RelationSpec (..),
     Schema,
     SchemaDef (..),
+    SchemaValidator (..),
     Target,
     TargetCardinality,
   )

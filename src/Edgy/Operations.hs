@@ -136,8 +136,13 @@ newNode ::
   (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
   Constructor attrs (Edgy schema (Node schema (DataNode typeName)))
 newNode =
-  mapConstructor (Proxy @attrs) mkNode $
-    (foldConstructor (Proxy @attrs) setAttr DMap.empty)
+  mapConstructor (Proxy @(DataNode typeName)) (Proxy @attrs) mkNode $
+    ( foldConstructor
+        (Proxy @(DataNode typeName))
+        (Proxy @attrs)
+        setAttr
+        DMap.empty
+    )
   where
     setAttr ::
       forall (attr :: AttributeSpec).

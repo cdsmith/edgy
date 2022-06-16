@@ -29,6 +29,7 @@ import Edgy
     RelationSpec (..),
     Schema,
     SchemaDef (..),
+    SchemaValidator (..),
     Target,
     TargetCardinality,
     addRelated,
@@ -86,6 +87,8 @@ type MySchema =
        (Relation "tool" Many (DataNode "Object"))
        (Relation "application" Many (DataNode "Activity"))
    ]
+
+_ = ValidateSchema @MySchema
 
 bigBang :: Edgy MySchema (Node MySchema Universe)
 bigBang = do

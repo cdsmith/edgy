@@ -78,9 +78,10 @@ data SchemaDef where
   DefDirected :: RelationSpec -> RelationSpec -> SchemaDef
   DefSymmetric :: RelationSpec -> SchemaDef
 
-type KnownAttrs :: [AttributeSpec] -> Constraint
-class Typeable attrs => KnownAttrs attrs where
+type KnownAttrs :: NodeType -> [AttributeSpec] -> Constraint
+class Typeable attrs => KnownAttrs nodeType attrs where
   foldNodeAttributes ::
+    Proxy nodeType ->
     Proxy attrs ->
     ( forall (attr :: AttributeSpec).
       (Typeable attr, Binary (AttributeType attr)) =>
@@ -92,6 +93,7 @@ class Typeable attrs => KnownAttrs attrs where
     a
 
   foldConstructor ::
+    Proxy nodeType ->
     Proxy attrs ->
     ( forall (attr :: AttributeSpec).
       (Typeable attr, Binary (AttributeType attr)) =>
@@ -104,37 +106,69 @@ class Typeable attrs => KnownAttrs attrs where
     Constructor attrs a
 
   mapConstructor ::
+    Proxy nodeType ->
     Proxy attrs ->
     (a -> b) ->
     Constructor attrs a ->
     Constructor attrs b
 
-instance KnownAttrs '[] where
-  foldNodeAttributes _ _ = id
-  foldConstructor _ _ = id
-  mapConstructor _ f = f
+instance KnownAttrs nodeType '[] where
+  foldNodeAttributes _ _ _ = id
+  foldConstructor _ _ _ = id
+  mapConstructor _ _ f = f
+
+type DupAttrCheck :: NodeType -> [AttributeSpec] -> Symbol -> Constraint
+type family DupAttrCheck nodeType attrs dupName where
+  DupAttrCheck nodeType ((name ::: _) : attrs) name =
+    TypeError
+      ( Text "Duplicate attribute: "
+          :<>: Text name
+          :<>: Text ", in node type "
+          :<>: ShowType nodeType
+      )
+  DupAttrCheck nodeType ((name ::? _) : attrs) name =
+    TypeError
+      ( Text "Duplicate attribute: "
+          :<>: Text name
+          :<>: Text ", in node type "
+          :<>: ShowType nodeType
+      )
+  DupAttrCheck nodeType (_ : attrs) name = DupAttrCheck nodeType attrs name
+  DupAttrCheck nodeType '[] name = ()
 
 instance
-  (KnownSymbol name, Typeable t, Binary t, KnownAttrs attrs) =>
-  KnownAttrs ((name ::: t) : attrs)
+  ( KnownSymbol name,
+    Typeable t,
+    Binary t,
+    KnownAttrs nodeType attrs,
+    DupAttrCheck nodeType attrs name
+  ) =>
+  KnownAttrs nodeType ((name ::: t) : attrs)
   where
-  foldNodeAttributes _ f x =
-    foldNodeAttributes (Proxy @attrs) f (f (Proxy @(name ::: t)) x)
-  foldConstructor _ f x v =
+  foldNodeAttributes pType _ f x =
+    foldNodeAttributes pType (Proxy @attrs) f (f (Proxy @(name ::: t)) x)
+  foldConstructor pType _ f x v =
     foldConstructor
+      pType
       (Proxy @attrs)
       f
       (f (Proxy @(name ::: t)) v x)
-  mapConstructor _ f = fmap (mapConstructor (Proxy @attrs) f)
+  mapConstructor pType _ f = fmap (mapConstructor pType (Proxy @attrs) f)
 
 instance
-  (KnownSymbol name, Typeable t, Binary t, KnownAttrs attrs) =>
-  KnownAttrs ((name ::? t) : attrs)
+  ( KnownSymbol name,
+    Typeable t,
+    Binary t,
+    Monoid t,
+    KnownAttrs nodeType attrs,
+    DupAttrCheck nodeType attrs name
+  ) =>
+  KnownAttrs nodeType ((name ::? t) : attrs)
   where
-  foldNodeAttributes _ f x =
-    foldNodeAttributes (Proxy @attrs) f (f (Proxy @(name ::? t)) x)
-  foldConstructor _ = foldConstructor (Proxy @attrs)
-  mapConstructor _ f = mapConstructor (Proxy @attrs) f
+  foldNodeAttributes pType _ f x =
+    foldNodeAttributes pType (Proxy @attrs) f (f (Proxy @(name ::? t)) x)
+  foldConstructor pType _ = foldConstructor pType (Proxy @attrs)
+  mapConstructor pType _ f = mapConstructor pType (Proxy @attrs) f
 
 type KnownSchema :: Schema -> Constraint
 class Typeable schema => KnownSchema schema where
@@ -178,12 +212,15 @@ instance KnownSchema '[] where
 
 instance
   {-# OVERLAPS #-}
-  (KnownSymbol typeName, KnownAttrs attrs, KnownSchema schema) =>
+  ( KnownSymbol typeName,
+    KnownAttrs (DataNode typeName) attrs,
+    KnownSchema schema
+  ) =>
   KnownSchema (DefNode (DataNode typeName) attrs : schema)
   where
   foldAttributes _ (p :: Proxy fromNode) f x =
     case testEquality (typeRep @(DataNode typeName)) (typeRep @fromNode) of
-      Just Refl -> foldNodeAttributes (Proxy @attrs) f x
+      Just Refl -> foldNodeAttributes p (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ (p :: Proxy fromNode) f x =
     let x' = case testEquality
@@ -201,12 +238,12 @@ instance
 
 instance
   {-# OVERLAPPABLE #-}
-  (KnownAttrs attrs, KnownSchema schema) =>
+  (KnownAttrs Universe attrs, KnownSchema schema) =>
   KnownSchema (DefNode Universe attrs : schema)
   where
   foldAttributes _ (p :: Proxy fromNode) f x =
     case testEquality (typeRep @Universe) (typeRep @fromNode) of
-      Just Refl -> foldNodeAttributes (Proxy @attrs) f x
+      Just Refl -> foldNodeAttributes p (Proxy @attrs) f x
       _ -> foldAttributes (Proxy @schema) p f x
   foldRelations _ = foldRelations (Proxy @schema)
 
@@ -264,14 +301,14 @@ type family Constructor attrs t where
 
 type HasNode :: Schema -> NodeType -> [AttributeSpec] -> Constraint
 class
-  (KnownSchema schema, Typeable nodeType, KnownAttrs attrs) =>
+  (KnownSchema schema, Typeable nodeType, KnownAttrs nodeType attrs) =>
   HasNode schema nodeType attrs
     | schema nodeType -> attrs
 
 instance
   ( KnownSchema schema,
     Typeable nodeType,
-    KnownAttrs attrs,
+    KnownAttrs nodeType attrs,
     NodeLookup schema nodeType attrs
   ) =>
   HasNode schema nodeType attrs
@@ -554,3 +591,6 @@ instance
     (Relation relation One Universe)
     (Relation relation One nodeType)
     Immutable
+
+data SchemaValidator schema where
+  ValidateSchema :: KnownSchema schema => SchemaValidator schema
