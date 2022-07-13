@@ -176,7 +176,7 @@ getDBRef' db dbkey = maybe insert return =<< tryGetDBRef' db dbkey
   where
     insert = do
       v <- unsafeIOToSTM $ do
-        mvar <- newEmptyMVar :: IO (MVar (Maybe a))
+        mvar <- newEmptyMVar
         _ <- forkIO $ readForDB db dbkey mvar
         takeMVar mvar
       ref <- newTVar v
