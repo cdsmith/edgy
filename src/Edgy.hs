@@ -14,6 +14,13 @@ module Edgy
     Edgy,
     runEdgy,
 
+    -- * The DB
+    DB,
+    DBPersister (..),
+    filePersister,
+    openDB,
+    closeDB,
+
     -- * Nodes and operations
     Node,
     getUniverse,
@@ -48,9 +55,10 @@ module Edgy
 where
 
 import Edgy.Cardinality (Cardinality (..), Numerous)
+import Edgy.DB (DB, DBPersister (..), closeDB, filePersister, openDB)
 import Edgy.Node (Node)
 import Edgy.Operations
-  ( Edgy (runEdgy),
+  ( Edgy,
     addRelated,
     clearRelated,
     deleteNode,
@@ -60,6 +68,7 @@ import Edgy.Operations
     isRelated,
     newNode,
     removeRelated,
+    runEdgy,
     setAttribute,
     setRelated,
   )

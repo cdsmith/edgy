@@ -1,7 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,6 +11,8 @@
 
 module Edgy.Operations where
 
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent.STM (STM)
 import Control.Monad (forM_)
 import Control.Monad.STM.Class (MonadSTM (..))
 import Data.Binary (Binary)
@@ -18,20 +20,13 @@ import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.Kind (Type)
 import Data.List ((\\))
-import Data.TCache
-  ( STM,
-    delDBRef,
-    getDBRef,
-    newDBRef,
-    readDBRef,
-    safeIOToSTM,
-    writeDBRef,
-  )
 import Data.Type.Equality (testEquality, (:~:) (..))
 import Data.Typeable (Proxy (..), Typeable)
+import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Edgy.Cardinality (KnownCardinality (..), Numerous)
+import Edgy.DB (DB, DBRef, delDBRef, getDBRef, readDBRef, writeDBRef)
 import Edgy.Node
   ( AttributeKey (..),
     AttributeVal (..),
@@ -65,15 +60,40 @@ import Edgy.Schema
     foldRelations,
     mapConstructor,
   )
+import GHC.Conc (unsafeIOToSTM)
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import Type.Reflection (TypeRep, typeRep)
 
 type Edgy :: Schema -> Type -> Type
-newtype Edgy schema a = Edgy {runEdgy :: STM a}
-  deriving (Functor, Applicative, Monad)
+newtype Edgy schema a = Edgy (DB -> STM a)
+  deriving (Functor)
+
+runEdgy :: DB -> Edgy schema a -> STM a
+runEdgy db (Edgy f) = f db
+
+instance Applicative (Edgy schema) where
+  pure = Edgy . const . pure
+  Edgy f <*> Edgy x = Edgy $ \db -> f db <*> x db
+
+instance Monad (Edgy schema) where
+  Edgy x >>= f = Edgy $ \db -> x db >>= \a -> runEdgy db (f a)
 
 instance MonadSTM (Edgy schema) where
-  liftSTM = Edgy
+  liftSTM = Edgy . const
+
+newNodeRef ::
+  (KnownSchema schema, Typeable nodeType) =>
+  DB ->
+  STM (UUID, DBRef (NodeImpl schema nodeType))
+newNodeRef db = do
+  uuid <- unsafeIOToSTM $ do
+    result <- newEmptyMVar
+    _ <- forkIO $ UUID.nextRandom >>= putMVar result
+    takeMVar result
+  ref <- getDBRef db (show uuid)
+  readDBRef ref >>= \case
+    Nothing -> return (uuid, ref)
+    _ -> newNodeRef db
 
 getEdges ::
   forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
@@ -83,15 +103,16 @@ getEdges ::
     KnownSymbol (RelationName spec),
     Typeable (Target spec)
   ) =>
+  DB ->
   Node schema nodeType ->
   STM [Node schema (Target spec)]
-getEdges (Node ref) =
+getEdges db (Node ref) =
   readDBRef ref >>= \case
     Just (NodeImpl uuid _ relations) -> do
       let result = DMap.lookup (RelatedKey (typeRep :: TypeRep spec)) relations
-          nref = case result of
-            Just (RelatedVal r) -> r
-            Nothing -> getDBRef (relatedKey uuid (Proxy @spec))
+      nref <- case result of
+        Just (RelatedVal r) -> pure r
+        Nothing -> getDBRef db (relatedKey uuid (Proxy @spec))
       readDBRef nref >>= \case
         Just (Nodes _ ns) -> return ns
         Nothing -> return []
@@ -105,17 +126,18 @@ modifyEdges ::
     KnownSymbol (RelationName spec),
     Typeable (Target spec)
   ) =>
+  DB ->
   Node schema nodeType ->
   ([Node schema (Target spec)] -> [Node schema (Target spec)]) ->
   STM ()
-modifyEdges (Node ref) f =
+modifyEdges db (Node ref) f =
   readDBRef ref >>= \case
     Just (NodeImpl uuid attrs relations) -> do
       let rkey = RelatedKey (typeRep :: TypeRep spec)
       nref <- case DMap.lookup rkey relations of
         Just (RelatedVal nref) -> return nref
         Nothing -> do
-          let nref = getDBRef (relatedKey uuid (Proxy @spec))
+          nref <- getDBRef db (relatedKey uuid (Proxy @spec))
           writeDBRef
             ref
             (NodeImpl uuid attrs (DMap.insert rkey (RelatedVal nref) relations))
@@ -126,11 +148,12 @@ modifyEdges (Node ref) f =
     Nothing -> error ("node not found: " ++ show ref)
 
 getUniverse :: KnownSchema schema => Edgy schema (Node schema Universe)
-getUniverse = Edgy $ do
-  let ref = getDBRef (show UUID.nil)
+getUniverse = Edgy $ \db -> do
+  ref <- getDBRef db (show UUID.nil)
   readDBRef ref >>= \case
-    Just _ -> return (Node ref)
-    Nothing -> Node <$> newDBRef (emptyNodeImpl UUID.nil)
+    Nothing -> writeDBRef ref (emptyNodeImpl UUID.nil)
+    _ -> return ()
+  return (Node ref)
 
 newNode ::
   forall (schema :: Schema) (typeName :: Symbol) {attrs :: [AttributeSpec]}.
@@ -155,12 +178,13 @@ newNode =
     setAttr (_ :: Proxy attr) val attrs =
       DMap.insert (AttributeKey @attr @schema typeRep) (AttributeVal val) attrs
 
-    mkNode attrs = Edgy @schema $ do
-      uuid <- safeIOToSTM UUID.nextRandom
-      node <- Node <$> newDBRef (NodeImpl uuid attrs DMap.empty)
-      let universe = Node (getDBRef (show UUID.nil)) :: Node schema Universe
-      modifyEdges @(ExistenceSpec typeName) universe (node :)
-      modifyEdges @(UniversalSpec typeName) node (const [universe])
+    mkNode attrs = Edgy @schema $ \db -> do
+      (uuid, ref) <- newNodeRef db
+      writeDBRef ref (NodeImpl uuid attrs DMap.empty)
+      let node = Node ref
+      universe <- Node <$> getDBRef db (show UUID.nil) :: STM (Node schema Universe)
+      modifyEdges @(ExistenceSpec typeName) db universe (node :)
+      modifyEdges @(UniversalSpec typeName) db node (const [universe])
       return node
 
 deleteNode ::
@@ -168,7 +192,7 @@ deleteNode ::
   (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
   Node schema (DataNode typeName) ->
   Edgy schema ()
-deleteNode node@(Node ref) = Edgy $ do
+deleteNode node@(Node ref) = Edgy $ \db -> do
   foldRelations
     (Proxy @schema)
     (Proxy @(DataNode typeName))
@@ -177,9 +201,9 @@ deleteNode node@(Node ref) = Edgy $ do
           (typeRep @(DataNode typeName))
           (typeRep @(Target inverse)) of
           Just Refl -> do
-            nodes <- getEdges @relation node
+            nodes <- getEdges @relation db node
             forM_ nodes $ \n -> do
-              modifyEdges @inverse n (filter (/= node))
+              modifyEdges @inverse db n (filter (/= node))
           _ -> return ()
         delRemaining
     )
@@ -195,7 +219,7 @@ getAttribute ::
   HasAttribute schema nodeType name attr =>
   Node schema nodeType ->
   Edgy schema (AttributeType attr)
-getAttribute (Node ref) = Edgy $ do
+getAttribute (Node ref) = Edgy $ \_db -> do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl _ attrs _) ->
@@ -222,7 +246,7 @@ setAttribute ::
   Node schema nodeType ->
   AttributeType attr ->
   Edgy schema ()
-setAttribute (Node ref) value = Edgy $ do
+setAttribute (Node ref) value = Edgy $ \_db -> do
   nodeImpl <- readDBRef ref
   case nodeImpl of
     Just (NodeImpl uuid attrs relations) ->
@@ -250,8 +274,8 @@ getRelated ::
   HasRelation schema nodeType relation spec inverse mutability =>
   Node schema nodeType ->
   Edgy schema (Numerous (TargetCardinality spec) (Node schema (Target spec)))
-getRelated node = Edgy $ do
-  listToNumerous @(TargetCardinality spec) <$> getEdges @spec node >>= \case
+getRelated node = Edgy $ \db -> do
+  listToNumerous @(TargetCardinality spec) <$> getEdges @spec db node >>= \case
     Just result -> return result
     Nothing -> error "getRelated: bad cardinality"
 
@@ -267,7 +291,7 @@ isRelated ::
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema Bool
-isRelated node target = Edgy $ elem target <$> getEdges @spec node
+isRelated node target = Edgy $ \db -> elem target <$> getEdges @spec db node
 
 setRelated ::
   forall
@@ -280,12 +304,12 @@ setRelated ::
   Node schema nodeType ->
   Numerous (TargetCardinality spec) (Node schema (Target spec)) ->
   Edgy schema ()
-setRelated a target = Edgy $ do
-  oldNodes <- getEdges @spec a
+setRelated a target = Edgy $ \db -> do
+  oldNodes <- getEdges @spec db a
   let newNodes = numerousToList @(TargetCardinality spec) target
-  modifyEdges @spec a (const newNodes)
-  forM_ (oldNodes \\ newNodes) $ \b -> modifyEdges @inverse b (filter (/= a))
-  forM_ (newNodes \\ oldNodes) $ \b -> modifyEdges @inverse b (a :)
+  modifyEdges @spec db a (const newNodes)
+  forM_ (oldNodes \\ newNodes) $ \b -> modifyEdges @inverse db b (filter (/= a))
+  forM_ (newNodes \\ oldNodes) $ \b -> modifyEdges @inverse db b (a :)
 
 addRelated ::
   forall
@@ -298,9 +322,9 @@ addRelated ::
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema ()
-addRelated a b = Edgy $ do
-  modifyEdges @spec a (b :)
-  modifyEdges @inverse b (a :)
+addRelated a b = Edgy $ \db -> do
+  modifyEdges @spec db a (b :)
+  modifyEdges @inverse db b (a :)
 
 removeRelated ::
   forall
@@ -313,9 +337,9 @@ removeRelated ::
   Node schema nodeType ->
   Node schema (Target spec) ->
   Edgy schema ()
-removeRelated a b = Edgy $ do
-  modifyEdges @spec a (filter (/= b))
-  modifyEdges @inverse b (filter (/= a))
+removeRelated a b = Edgy $ \db -> do
+  modifyEdges @spec db a (filter (/= b))
+  modifyEdges @inverse db b (filter (/= a))
 
 clearRelated ::
   forall
@@ -327,8 +351,8 @@ clearRelated ::
   HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Edgy schema ()
-clearRelated node = Edgy $ do
-  nodes <- getEdges @spec node
+clearRelated node = Edgy $ \db -> do
+  nodes <- getEdges @spec db node
   forM_ nodes $ \n -> do
-    modifyEdges @inverse n (filter (/= node))
-  modifyEdges @spec node (const [])
+    modifyEdges @inverse db n (filter (/= node))
+  modifyEdges @spec db node (const [])

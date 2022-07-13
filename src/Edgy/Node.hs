@@ -20,11 +20,10 @@ import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..))
 import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
-import Data.TCache (DBRef)
-import Data.TCache.DefaultPersistence (Indexable (..), Serializable (..))
 import Data.Type.Equality ((:~:) (..))
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
+import Edgy.DB
 import Edgy.Schema
   ( AttributeSpec,
     AttributeType,
@@ -37,7 +36,6 @@ import Edgy.Schema
   )
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
-import Type.Reflection.Unsafe (typeRepFingerprint)
 
 type Node :: Schema -> NodeType -> Type
 newtype Node schema nodeType = Node (DBRef (NodeImpl schema nodeType))
@@ -45,10 +43,10 @@ newtype Node schema nodeType = Node (DBRef (NodeImpl schema nodeType))
 
 instance
   (KnownSchema schema, Typeable nodeType) =>
-  Binary (Node schema nodeType)
+  DBStorable (Node schema nodeType)
   where
-  put (Node ref) = put (show ref)
-  get = Node . read <$> get
+  putDB (Node ref) = putDB ref
+  getDB db bs = Node <$> getDB db bs
 
 type AttributeKey :: Schema -> AttributeSpec -> Type
 data AttributeKey schema attr where
@@ -119,19 +117,13 @@ relatedKey uuid _ =
   show uuid ++ "." ++ symbolVal (Proxy @(RelationName relation))
 
 instance
-  KnownSymbol (RelationName relation) =>
-  Indexable (Nodes schema relation)
+  (KnownSchema schema, Typeable relation, Typeable (Target relation)) =>
+  DBStorable (Nodes schema relation)
   where
-  key (Nodes uuid _) = relatedKey uuid (Proxy @relation)
-
-instance
-  (KnownSchema schema, Typeable (Target relation)) =>
-  Serializable (Nodes schema relation)
-  where
-  serialize (Nodes uuid nodes) = Binary.encode (uuid, nodes)
-  deserialize = do
-    (uuid, nodes) <- Binary.decode
-    pure $ Nodes uuid nodes
+  putDB (Nodes uuid nodes) = Binary.encode (uuid, map putDB nodes)
+  getDB db bs = do
+    let (uuid, nodes) = Binary.decode bs
+    Nodes uuid <$> mapM (getDB db) nodes
 
 type RelatedVal :: Schema -> RelationSpec -> Type
 data RelatedVal schema relation where
@@ -145,10 +137,10 @@ instance
     KnownSymbol (RelationName relation),
     Typeable (Target relation)
   ) =>
-  Binary (RelatedVal schema relation)
+  DBStorable (RelatedVal schema relation)
   where
-  put (RelatedVal ref) = put (show ref)
-  get = RelatedVal . read <$> get
+  putDB (RelatedVal ref) = putDB ref
+  getDB db bs = RelatedVal <$> getDB db bs
 
 type NodeImpl :: Schema -> NodeType -> Type
 data NodeImpl schema nodeType
@@ -157,42 +149,31 @@ data NodeImpl schema nodeType
       (DMap (AttributeKey schema) (AttributeVal schema))
       (DMap (RelatedKey schema) (RelatedVal schema))
 
-instance Indexable (NodeImpl schema nodeType) where
-  key (NodeImpl uuid _ _) = show uuid
-
 instance
   (KnownSchema schema, Typeable nodeType) =>
-  Serializable (NodeImpl schema nodeType)
+  DBStorable (NodeImpl schema nodeType)
   where
-  serialize = Binary.encode
-  deserialize = Binary.decode
+  putDB (NodeImpl uuid attrs _) =
+    let attrMap =
+          foldAttributes
+            (Proxy :: Proxy schema)
+            (Proxy :: Proxy nodeType)
+            ( \(_ :: Proxy attr) m ->
+                let tr = typeRep :: TypeRep attr
+                    k = AttributeKey tr
+                 in case DMap.lookup k attrs of
+                      Just (AttributeVal v) ->
+                        Map.insert
+                          (Binary.encode tr)
+                          (Binary.encode v)
+                          m
+                      Nothing -> m
+            )
+            mempty
+     in Binary.encode (uuid, attrMap)
 
-instance
-  (KnownSchema schema, Typeable nodeType) =>
-  Binary (NodeImpl schema nodeType)
-  where
-  put (NodeImpl uuid attrs _) = do
-    put uuid
-    put $
-      foldAttributes
-        (Proxy :: Proxy schema)
-        (Proxy :: Proxy nodeType)
-        ( \(_ :: Proxy attr) m ->
-            let tr = typeRep :: TypeRep attr
-                k = AttributeKey tr
-             in case DMap.lookup k attrs of
-                  Just (AttributeVal v) ->
-                    Map.insert
-                      (Binary.encode (typeRepFingerprint tr, show tr))
-                      (Binary.encode v)
-                      m
-                  Nothing -> m
-        )
-        mempty
-
-  get = do
-    uuid <- get
-    attrMap <- get
+  getDB _ bs = do
+    let (uuid, attrMap) = Binary.decode bs
     let attrs =
           foldAttributes
             (Proxy :: Proxy schema)
@@ -201,7 +182,7 @@ instance
                 let tr = typeRep :: TypeRep attr
                     k = AttributeKey tr
                  in case Map.lookup
-                      (Binary.encode (typeRepFingerprint tr, show tr))
+                      (Binary.encode tr)
                       attrMap of
                       Just val ->
                         DMap.insert
