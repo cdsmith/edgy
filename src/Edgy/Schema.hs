@@ -36,6 +36,11 @@ data AttributeSpec where
   (:::) :: Symbol -> Type -> AttributeSpec
   (::?) :: Symbol -> Type -> AttributeSpec
 
+type AttributeName :: AttributeSpec -> Symbol
+type family AttributeName attr where
+  AttributeName (n ::: _) = n
+  AttributeName (n ::? _) = n
+
 type AttributeType :: AttributeSpec -> Type
 type family AttributeType attr where
   AttributeType (_ ::: t) = t
@@ -84,7 +89,11 @@ class Typeable attrs => KnownAttrs nodeType attrs where
     Proxy nodeType ->
     Proxy attrs ->
     ( forall (attr :: AttributeSpec).
-      (Typeable attr, Binary (AttributeType attr)) =>
+      ( Typeable attr,
+        KnownSymbol (AttributeName attr),
+        Typeable (AttributeType attr),
+        Binary (AttributeType attr)
+      ) =>
       Proxy attr ->
       a ->
       a
@@ -96,7 +105,11 @@ class Typeable attrs => KnownAttrs nodeType attrs where
     Proxy nodeType ->
     Proxy attrs ->
     ( forall (attr :: AttributeSpec).
-      (Typeable attr, Binary (AttributeType attr)) =>
+      ( Typeable attr,
+        KnownSymbol (AttributeName attr),
+        Typeable (AttributeType attr),
+        Binary (AttributeType attr)
+      ) =>
       Proxy attr ->
       AttributeType attr ->
       a ->
@@ -178,13 +191,18 @@ class Typeable schema => KnownSchema schema where
     Proxy schema ->
     Proxy nodeType ->
     ( forall (attr :: AttributeSpec).
-      (Typeable attr, Binary (AttributeType attr)) =>
+      ( Typeable attr,
+        KnownSymbol (AttributeName attr),
+        Typeable (AttributeType attr),
+        Binary (AttributeType attr)
+      ) =>
       Proxy attr ->
       a ->
       a
     ) ->
     a ->
     a
+
   foldRelations ::
     forall (nodeType :: NodeType) (a :: Type).
     Typeable nodeType =>

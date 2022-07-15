@@ -33,6 +33,7 @@ import Edgy.Schema
     RelationSpec (..),
     Schema,
     Target,
+    AttributeName
   )
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
@@ -159,12 +160,13 @@ instance
             (Proxy :: Proxy schema)
             (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy attr) m ->
-                let tr = typeRep :: TypeRep attr
-                    k = AttributeKey tr
+                let n = symbolVal (Proxy @(AttributeName attr))
+                    tr = typeRep @(AttributeType attr)
+                    k = AttributeKey (typeRep @attr)
                  in case DMap.lookup k attrs of
                       Just (AttributeVal v) ->
                         Map.insert
-                          (Binary.encode tr)
+                          (Binary.encode (n, tr))
                           (Binary.encode v)
                           m
                       Nothing -> m
@@ -179,10 +181,11 @@ instance
             (Proxy :: Proxy schema)
             (Proxy :: Proxy nodeType)
             ( \(_ :: Proxy attr) m ->
-                let tr = typeRep :: TypeRep attr
-                    k = AttributeKey tr
+                let n = symbolVal (Proxy @(AttributeName attr))
+                    tr = typeRep @(AttributeType attr)
+                    k = AttributeKey (typeRep @attr)
                  in case Map.lookup
-                      (Binary.encode tr)
+                      (Binary.encode (n, tr))
                       attrMap of
                       Just val ->
                         DMap.insert
