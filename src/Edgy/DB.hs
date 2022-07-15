@@ -54,7 +54,9 @@ class Typeable a => DBStorable a where
   getDB :: DB -> ByteString -> STM a
   putDB :: a -> ByteString
 
-data SomeTVar = forall a. DBStorable a => SomeTVar (TVar (Maybe a))
+data Possible a = Loading | Missing | Present a
+
+data SomeTVar = forall a. DBStorable a => SomeTVar (TVar (Possible a))
 
 data DBPersister = DBPersister
   { dbReader :: String -> IO (Maybe ByteString),
@@ -69,7 +71,7 @@ data DB = DB
     dbClosed :: TVar Bool
   }
 
-data DBRef a = DBRef DB String (TVar (Maybe a))
+data DBRef a = DBRef DB String (TVar (Possible a))
 
 instance Eq (DBRef a) where
   DBRef _ k1 _ == DBRef _ k2 _ = k1 == k2
@@ -132,14 +134,14 @@ closeDB db = do
   atomically $ writeTVar (dbClosing db) True
   atomically $ readTVar (dbClosed db) >>= bool retry (return ())
 
-readForDB :: DBStorable a => DB -> String -> MVar (Maybe a) -> IO ()
+readForDB :: DBStorable a => DB -> String -> MVar (Possible a) -> IO ()
 readForDB db key mvar = do
   readResult <- dbReader (dbPersister db) key
   case readResult of
     Just bs -> do
       v <- atomically (getDB db bs)
-      putMVar mvar (Just v)
-    Nothing -> putMVar mvar Nothing
+      putMVar mvar (Present v)
+    Nothing -> putMVar mvar Missing
 
 getDBRef :: forall a. DBStorable a => DB -> String -> STM (DBRef a)
 getDBRef db key =
@@ -153,11 +155,7 @@ getDBRef db key =
     Nothing -> insert
   where
     insert = do
-      v <- unsafeIOToSTM $ do
-        mvar <- newEmptyMVar
-        _ <- forkIO $ readForDB db key mvar
-        takeMVar mvar
-      ref <- newTVar v
+      ref <- newTVar Loading
       ptr <- unsafeIOToSTM $ do
         ptr <- mkWeak ref (SomeTVar ref) Nothing
         addFinalizer ref $
@@ -174,22 +172,28 @@ getDBRef db key =
               (dbRefs db)
         return ptr
       SMap.insert (typeRep (Proxy @a), ptr) key (dbRefs db)
+      v <- unsafeIOToSTM $ do
+        mvar <- newEmptyMVar
+        _ <- forkIO $ readForDB db key mvar
+        takeMVar mvar
+      writeTVar ref v
       return (DBRef db key ref)
 
 readDBRef :: DBRef a -> STM (Maybe a)
 readDBRef (DBRef _ _ ref) = do
   readTVar ref >>= \case
-    Just a -> return (Just a)
-    Nothing -> return Nothing
+    Loading -> retry
+    Missing -> return Nothing
+    Present a -> return (Just a)
 
 writeDBRef :: DBStorable a => DBRef a -> a -> STM ()
 writeDBRef (DBRef db dbkey ref) a = do
-  writeTVar ref (Just a)
+  writeTVar ref (Present a)
   d <- readTVar (dbDirty db)
   writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Just (putDB a)) d)
 
 delDBRef :: DBStorable a => DBRef a -> STM ()
 delDBRef (DBRef db dbkey ref) = do
-  writeTVar ref Nothing
+  writeTVar ref Missing
   d <- readTVar (dbDirty db)
   writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Nothing) d)
