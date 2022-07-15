@@ -46,22 +46,6 @@ import Edgy
 import GHC.TypeLits (Symbol, symbolVal)
 import System.Environment (getArgs)
 
-data Person = Person
-  { pName :: String,
-    age :: Int
-  }
-  deriving (Show)
-
-data Activity = Activity
-  { aName :: String
-  }
-  deriving (Show)
-
-data Object = Object
-  { oName :: String
-  }
-  deriving (Show)
-
 type MySchema =
   '[ DefNode
        (DataNode "Person")
@@ -167,14 +151,10 @@ missingTools ::
   Node MySchema (DataNode "Person") ->
   Edgy MySchema [Node MySchema (DataNode "Object")]
 missingTools person = do
-  todo <- getRelated @"hobby" person
-  needed <- concatMapM (getRelated @"tool") todo
-  friends <- getRelated @"friend" person
+  needed <- concatMapM (getRelated @"tool") =<< getRelated @"hobby" person
   available <-
     (++)
-      <$> concatMapM
-        (getRelated @"possession")
-        friends
+      <$> (concatMapM (getRelated @"possession") =<< getRelated @"friend" person)
       <*> getRelated @"possession" person
   return (needed \\ available)
 
@@ -182,8 +162,7 @@ missingTools person = do
 
 main :: IO ()
 main = do
-  persister <- filePersister ".db"
-  db <- openDB persister
+  db <- openDB =<< filePersister ".db"
   getArgs >>= \case
     ["create"] -> atomically (runEdgy db bigBang) >> return ()
     ["query", name] -> do

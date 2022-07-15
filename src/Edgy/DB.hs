@@ -16,7 +16,7 @@ module Edgy.DB
     readDBRef,
     writeDBRef,
     delDBRef,
-    DBPersister (..),
+    Persister (..),
     filePersister,
   )
 where
@@ -58,15 +58,15 @@ data Possible a = Loading | Missing | Present a
 
 data SomeTVar = forall a. DBStorable a => SomeTVar (TVar (Possible a))
 
-data DBPersister = DBPersister
-  { dbReader :: String -> IO (Maybe ByteString),
-    dbWriter :: Map String (Maybe ByteString) -> IO ()
-  }
+data Persister
+  = Persister
+      (String -> IO (Maybe ByteString))
+      (Map String (Maybe ByteString) -> IO ())
 
 data DB = DB
   { dbRefs :: SMap.Map String (TypeRep, Weak SomeTVar),
     dbDirty :: TVar (Map String (SomeTVar, Maybe ByteString)),
-    dbPersister :: DBPersister,
+    dbPersister :: Persister,
     dbClosing :: TVar Bool,
     dbClosed :: TVar Bool
   }
@@ -86,24 +86,25 @@ instance DBStorable a => DBStorable (DBRef a) where
   getDB db bs = getDBRef db (decode bs)
   putDB (DBRef _ dbkey _) = encode dbkey
 
-filePersister :: FilePath -> IO DBPersister
+filePersister :: FilePath -> IO Persister
 filePersister dir = do
   createDirectoryIfMissing True dir
   return $
-    DBPersister
-      { dbReader = \key -> do
+    Persister
+      ( \key -> do
           ex <- doesFileExist (dir </> key)
           if ex
             then Just <$> BS.fromStrict <$> BS.readFile (dir </> key)
-            else return Nothing,
-        dbWriter = \m -> forM_ (Map.toList m) $
+            else return Nothing
+      )
+      ( \m -> forM_ (Map.toList m) $
           \(key, mbs) -> case mbs of
             Just bs -> BS.writeFile (dir </> key) (BS.toStrict bs)
             Nothing -> removeFile (dir </> key)
-      }
+      )
 
-openDB :: DBPersister -> IO DB
-openDB persister = do
+openDB :: Persister -> IO DB
+openDB persister@(Persister _ writer) = do
   refs <- SMap.newIO
   dirty <- newTVarIO Map.empty
   closing <- newTVarIO False
@@ -116,7 +117,7 @@ openDB persister = do
         when (not c && Map.null d) retry
         when (not (Map.null d)) $ writeTVar dirty Map.empty
         return (d, c)
-      when (not (Map.null d)) $ dbWriter persister (snd <$> d)
+      when (not (Map.null d)) $ writer (snd <$> d)
       return (not c)
     atomically $ writeTVar closed True
   let db =
@@ -136,7 +137,8 @@ closeDB db = do
 
 readForDB :: DBStorable a => DB -> String -> MVar (Possible a) -> IO ()
 readForDB db key mvar = do
-  readResult <- dbReader (dbPersister db) key
+  let (Persister reader _) = dbPersister db
+  readResult <- reader key
   case readResult of
     Just bs -> do
       v <- atomically (getDB db bs)

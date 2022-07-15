@@ -16,7 +16,7 @@ module Edgy
 
     -- * The DB
     DB,
-    DBPersister (..),
+    Persister (..),
     filePersister,
     openDB,
     closeDB,
@@ -55,7 +55,7 @@ module Edgy
 where
 
 import Edgy.Cardinality (Cardinality (..), Numerous)
-import Edgy.DB (DB, DBPersister (..), closeDB, filePersister, openDB)
+import Edgy.DB (DB, Persister (..), closeDB, filePersister, openDB)
 import Edgy.Node (Node)
 import Edgy.Operations
   ( Edgy,
