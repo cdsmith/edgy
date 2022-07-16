@@ -33,15 +33,14 @@ import Edgy
     Target,
     TargetCardinality,
     addRelated,
-    closeDB,
     filePersister,
     getAttribute,
     getRelated,
     getUniverse,
     newNode,
-    openDB,
     removeRelated,
     runEdgy,
+    withDB,
   )
 import GHC.TypeLits (Symbol, symbolVal)
 import System.Environment (getArgs)
@@ -162,46 +161,46 @@ missingTools person = do
 
 main :: IO ()
 main = do
-  db <- openDB =<< filePersister ".db"
-  getArgs >>= \case
-    ["create"] -> atomically (runEdgy db bigBang) >> return ()
-    ["query", name] -> do
-      missingNames <- atomically $
+  persister <- filePersister ".db"
+  withDB persister $ \db -> do
+    getArgs >>= \case
+      ["create"] -> atomically (runEdgy db bigBang) >> return ()
+      ["query", name] -> do
+        missingNames <- atomically $
+          runEdgy db $ do
+            person <- lookupPerson name
+            missing <- missingTools person
+            traverse (getAttribute @"name") missing
+        putStrLn $ name ++ " is missing:"
+        traverse_ putStrLn missingNames
+      ["buy", name, tool] -> atomically $
         runEdgy db $ do
           person <- lookupPerson name
-          missing <- missingTools person
-          traverse (getAttribute @"name") missing
-      putStrLn $ name ++ " is missing:"
-      traverse_ putStrLn missingNames
-    ["buy", name, tool] -> atomically $
-      runEdgy db $ do
-        person <- lookupPerson name
-        object <- lookupObject tool
-        addRelated @"possession" person object
-    ["discard", name, tool] -> atomically $
-      runEdgy db $ do
-        person <- lookupPerson name
-        object <- lookupObject tool
-        removeRelated @"possession" person object
-    ["friend", name1, name2] -> atomically $
-      runEdgy db $ do
-        person1 <- lookupPerson name1
-        person2 <- lookupPerson name2
-        addRelated @"friend" person1 person2
-    ["unfriend", name1, name2] -> atomically $
-      runEdgy db $ do
-        person1 <- lookupPerson name1
-        person2 <- lookupPerson name2
-        removeRelated @"friend" person1 person2
-    ["marry", name1, name2] -> atomically $
-      runEdgy db $ do
-        person1 <- lookupPerson name1
-        person2 <- lookupPerson name2
-        addRelated @"spouse" person1 person2
-    ["divorce", name1, name2] -> atomically $
-      runEdgy db $ do
-        person1 <- lookupPerson name1
-        person2 <- lookupPerson name2
-        removeRelated @"spouse" person1 person2
-    _ -> putStrLn "Usage: main [cmd]"
-  closeDB db
+          object <- lookupObject tool
+          addRelated @"possession" person object
+      ["discard", name, tool] -> atomically $
+        runEdgy db $ do
+          person <- lookupPerson name
+          object <- lookupObject tool
+          removeRelated @"possession" person object
+      ["friend", name1, name2] -> atomically $
+        runEdgy db $ do
+          person1 <- lookupPerson name1
+          person2 <- lookupPerson name2
+          addRelated @"friend" person1 person2
+      ["unfriend", name1, name2] -> atomically $
+        runEdgy db $ do
+          person1 <- lookupPerson name1
+          person2 <- lookupPerson name2
+          removeRelated @"friend" person1 person2
+      ["marry", name1, name2] -> atomically $
+        runEdgy db $ do
+          person1 <- lookupPerson name1
+          person2 <- lookupPerson name2
+          addRelated @"spouse" person1 person2
+      ["divorce", name1, name2] -> atomically $
+        runEdgy db $ do
+          person1 <- lookupPerson name1
+          person2 <- lookupPerson name2
+          removeRelated @"spouse" person1 person2
+      _ -> putStrLn "Usage: main [cmd]"

@@ -10,6 +10,7 @@ module Edgy.DB
   ( DB,
     openDB,
     closeDB,
+    withDB,
     checkWriteQueue,
     DBRef,
     DBStorable (..),
@@ -41,6 +42,7 @@ import Control.Concurrent.STM
     retry,
     writeTVar,
   )
+import Control.Exception (bracket)
 import Control.Monad (forM_, when)
 import Control.Monad.Extra (whileM)
 import Data.Binary (decode, encode)
@@ -144,6 +146,9 @@ closeDB :: DB -> IO ()
 closeDB db = do
   atomically $ writeTVar (dbClosing db) True
   atomically $ readTVar (dbClosed db) >>= bool retry (return ())
+
+withDB :: Persister -> (DB -> IO ()) -> IO ()
+withDB persister f = bracket (openDB persister) closeDB f
 
 checkWriteQueue :: DB -> Int -> STM ()
 checkWriteQueue db maxLen = do
