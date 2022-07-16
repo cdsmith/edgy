@@ -10,6 +10,7 @@ module Edgy.DB
   ( DB,
     openDB,
     closeDB,
+    checkWriteQueue,
     DBRef,
     DBStorable (..),
     getDBRef,
@@ -143,6 +144,11 @@ closeDB :: DB -> IO ()
 closeDB db = do
   atomically $ writeTVar (dbClosing db) True
   atomically $ readTVar (dbClosed db) >>= bool retry (return ())
+
+checkWriteQueue :: DB -> Int -> STM ()
+checkWriteQueue db maxLen = do
+  dirty <- readTVar (dbDirty db)
+  when (Map.size dirty > maxLen) retry
 
 readForDB :: DBStorable a => DB -> String -> MVar (Possible a) -> IO ()
 readForDB db key mvar = do

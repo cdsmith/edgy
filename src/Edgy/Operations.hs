@@ -26,7 +26,15 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Edgy.Cardinality (KnownCardinality (..), Numerous)
-import Edgy.DB (DB, DBRef, delDBRef, getDBRef, readDBRef, writeDBRef)
+import Edgy.DB
+  ( DB,
+    DBRef,
+    checkWriteQueue,
+    delDBRef,
+    getDBRef,
+    readDBRef,
+    writeDBRef,
+  )
 import Edgy.Node
   ( AttributeKey (..),
     AttributeVal (..),
@@ -69,7 +77,9 @@ newtype Edgy schema a = Edgy (DB -> STM a)
   deriving (Functor)
 
 runEdgy :: DB -> Edgy schema a -> STM a
-runEdgy db (Edgy f) = f db
+runEdgy db (Edgy f) = checkWriteQueue db maxQueue >> f db
+  where
+    maxQueue = 10000
 
 instance Applicative (Edgy schema) where
   pure = Edgy . const . pure
