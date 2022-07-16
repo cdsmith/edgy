@@ -21,7 +21,15 @@ module Edgy.DB
   )
 where
 
-import Control.Concurrent (MVar, forkIO, newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent
+  ( MVar,
+    forkIO,
+    newEmptyMVar,
+    newMVar,
+    putMVar,
+    takeMVar,
+    withMVar,
+  )
 import Control.Concurrent.STM
   ( STM,
     TVar,
@@ -89,15 +97,16 @@ instance DBStorable a => DBStorable (DBRef a) where
 filePersister :: FilePath -> IO Persister
 filePersister dir = do
   createDirectoryIfMissing True dir
+  lock <- newMVar ()
   return $
     Persister
-      ( \key -> do
+      ( \key -> withMVar lock $ \_ -> do
           ex <- doesFileExist (dir </> key)
           if ex
             then Just <$> BS.fromStrict <$> BS.readFile (dir </> key)
             else return Nothing
       )
-      ( \m -> forM_ (Map.toList m) $
+      ( \m -> withMVar lock $ \_ -> forM_ (Map.toList m) $
           \(key, mbs) -> case mbs of
             Just bs -> BS.writeFile (dir </> key) (BS.toStrict bs)
             Nothing -> removeFile (dir </> key)
