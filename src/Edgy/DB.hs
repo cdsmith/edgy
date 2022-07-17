@@ -6,6 +6,22 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | A scheme for adding persistence to Haskell's STM transactions.  A @'DBRef'
+-- a@ is like a @'TVar' ('Maybe' a)@, except that it exists (or not) in
+-- persistent storage as well as in memory.
+--
+-- The choice of persistent storage is up to the user, and is specified with a
+-- 'Persister'.  There is a default implementation called 'filePersister' that
+-- uses files on disk.  Note that 'filePersister' doesn't guarantee
+-- transactional atomicity in the presence of sudden termination of the process,
+-- such as in a power outage or system crash.  Therefore, for serious use,
+-- it's recommended that you use a different 'Persister' implementation based on
+-- a storage layer with stronger transactional guarantees.
+--
+-- For this scheme to work at all, this process must be the only entity to
+-- access the persistent storage.  You may not even use a single-writer,
+-- multiple-reader architecture, because consistency guarantees for reads, as
+-- well, depend on all writes happening in the current process.
 module Edgy.DB
   ( DB,
     openDB,
@@ -24,13 +40,10 @@ module Edgy.DB
 where
 
 import Control.Concurrent
-  ( MVar,
-    forkIO,
+  ( forkIO,
     newEmptyMVar,
-    newMVar,
     putMVar,
     takeMVar,
-    withMVar,
   )
 import Control.Concurrent.STM
   ( STM,
@@ -61,32 +74,68 @@ import System.FilePath ((</>))
 import System.Mem.Weak (Weak, addFinalizer, deRefWeak, mkWeak)
 import Unsafe.Coerce (unsafeCoerce)
 
+-- | A type class for things that can be stored in a DBRef.  This is similar to
+-- a serialization class like 'Binary', but reads have access to the 'DB' and
+-- the STM monad, which is important because it allows for one 'DBRef' to be
+-- stored inside the value of another.  (In this case, 'getDB' will call
+-- 'getDBRef'.)
 class Typeable a => DBStorable a where
   getDB :: DB -> ByteString -> STM a
   putDB :: a -> ByteString
 
+-- | Internal state of a 'DBRef'.  'Loading' means that the value is already
+-- being loaded from persistent storage in a different thread, so the current
+-- transaction can just retry to wait for it to load.
 data Possible a = Loading | Missing | Present a
 
-data SomeTVar = forall a. DBStorable a => SomeTVar (TVar (Possible a))
+-- | Existential wrapper around 'TVar' that lets 'TVar's of various types be
+-- cached.
+data SomeTVar = forall a. SomeTVar (TVar (Possible a))
 
+-- | A strategy for persisting values from 'DBRef' to some persistent storage.
+-- The 'filePersister' implementation is provided as a quick way to get started,
+-- but note the weaknesses in its documentation.
+--
+-- A 'Persister' can read one value at a time, but should be able to atomically
+-- write/delete an entire set of keys at once, preferably atomically.
 data Persister
   = Persister
       (String -> IO (Maybe ByteString))
       (Map String (Maybe ByteString) -> IO ())
 
+-- A currently open database in which 'DBRef's can be read and written.  See
+-- 'openDB', 'closeDB', and 'withDB' to manage 'DB' values.
 data DB = DB
-  { dbRefs :: SMap.Map String (TypeRep, Weak SomeTVar),
+  { -- | Cached 'TVar's corresponding to 'DBRef's that are already loading or
+    -- loaded.
+    dbRefs :: SMap.Map String (TypeRep, Weak SomeTVar),
+    -- | Collection of dirty values that need to be written.  Only the
+    -- 'ByteString' from the value is needed, but keeping the 'TVar' as well
+    -- ensures that the 'TVar' won't be garbage collected and removed from
+    -- 'dbRefs', which guarantees the value won't be read again until after the
+    -- write is complete.  This is needed for consistency.
     dbDirty :: TVar (Map String (SomeTVar, Maybe ByteString)),
+    -- | The persister that is used for this database.
     dbPersister :: Persister,
+    -- | If True, then 'closeDB' has been called, and the no new accesses to the
+    -- 'DBRef's should be allowed.  This also triggers the writer thread to exit
+    -- as soon as it has finished writing all dirty values.
     dbClosing :: TVar Bool,
+    -- | If True, the writer thread as finished writing all dirty values, and
+    -- it's okay for the process to exit.
     dbClosed :: TVar Bool
   }
 
+-- A reference to persistent data from some 'DB' that can be accessed in 'STM'
+-- transaction.  @'DBRef' a@ is similar to @'TVar ('Maybe' a)@, except that
+-- values exist in persistent storage as well as in memory.
 data DBRef a = DBRef DB String (TVar (Possible a))
 
+-- | Only 'DBRef's in the same 'DB' should be compared.
 instance Eq (DBRef a) where
   DBRef _ k1 _ == DBRef _ k2 _ = k1 == k2
 
+-- | Only 'DBRef's in the same 'DB' should be compared.
 instance Ord (DBRef a) where
   compare (DBRef _ k1 _) (DBRef _ k2 _) = compare k1 k2
 
@@ -97,24 +146,30 @@ instance DBStorable a => DBStorable (DBRef a) where
   getDB db bs = getDBRef db (decode bs)
   putDB (DBRef _ dbkey _) = encode dbkey
 
+-- | A simple 'Persister' that stores data in a directory in the local
+-- filesystem.  This is an easy way to get started.  However, note that because
+-- writes are not atomic, your data can be corrupted during a crash or power
+-- outage.  For this reason, it's recommended that you use a different
+-- 'Persister' for most applications.
 filePersister :: FilePath -> IO Persister
 filePersister dir = do
   createDirectoryIfMissing True dir
-  lock <- newMVar ()
   return $
     Persister
-      ( \key -> withMVar lock $ \_ -> do
+      ( \key -> do
           ex <- doesFileExist (dir </> key)
           if ex
             then Just <$> BS.fromStrict <$> BS.readFile (dir </> key)
             else return Nothing
       )
-      ( \m -> withMVar lock $ \_ -> forM_ (Map.toList m) $
+      ( \m -> forM_ (Map.toList m) $
           \(key, mbs) -> case mbs of
             Just bs -> BS.writeFile (dir </> key) (BS.toStrict bs)
             Nothing -> removeFile (dir </> key)
       )
 
+-- | Opens a 'DB' using the given 'Persister'.  The caller should guarantee that
+-- 'closeDB' is called when the 'DB' is no longer needed.
 openDB :: Persister -> IO DB
 openDB persister@(Persister _ writer) = do
   refs <- SMap.newIO
@@ -142,29 +197,33 @@ openDB persister@(Persister _ writer) = do
           }
   return db
 
+-- | Closes a 'DB'.  When this call returns, all data will be written to
+-- persistent storage, and the program can exit without possibly losing data.
 closeDB :: DB -> IO ()
 closeDB db = do
   atomically $ writeTVar (dbClosing db) True
   atomically $ readTVar (dbClosed db) >>= bool retry (return ())
 
+-- | Runs an action with a 'DB' open.  The 'DB' will be closed when the action
+-- is finished.  The 'DB' value should not be used after the action has
+-- returned.
 withDB :: Persister -> (DB -> IO ()) -> IO ()
 withDB persister f = bracket (openDB persister) closeDB f
 
+-- | Check that there are at most the given number of queued writes to the
+-- database, and retries the transaction if so.  Adding this to the beginning of
+-- your transactions can help prevent writes from falling too far behind the
+-- live data, and can reduce memory usage (because 'DBRef's no longer need to be
+-- retained once they are written to disk).
 checkWriteQueue :: DB -> Int -> STM ()
 checkWriteQueue db maxLen = do
   dirty <- readTVar (dbDirty db)
   when (Map.size dirty > maxLen) retry
 
-readForDB :: DBStorable a => DB -> String -> MVar (Possible a) -> IO ()
-readForDB db key mvar = do
-  let (Persister reader _) = dbPersister db
-  readResult <- reader key
-  case readResult of
-    Just bs -> do
-      v <- atomically (getDB db bs)
-      putMVar mvar (Present v)
-    Nothing -> putMVar mvar Missing
-
+-- | Retrieves a 'DBRef' from a 'DB' for the given key.  Throws an exception if
+-- the 'DBRef' requested has a different type from a previous time the key was
+-- used in this process, or if a serialized value in persistent storage cannot
+-- be parsed.
 getDBRef :: forall a. DBStorable a => DB -> String -> STM (DBRef a)
 getDBRef db key =
   SMap.lookup key (dbRefs db) >>= \case
@@ -196,11 +255,23 @@ getDBRef db key =
       SMap.insert (typeRep (Proxy @a), ptr) key (dbRefs db)
       v <- unsafeIOToSTM $ do
         mvar <- newEmptyMVar
-        _ <- forkIO $ readForDB db key mvar
+        _ <- forkIO $ readKey mvar
         takeMVar mvar
       writeTVar ref v
       return (DBRef db key ref)
 
+    readKey mvar = do
+      let (Persister reader _) = dbPersister db
+      readResult <- reader key
+      case readResult of
+        Just bs -> do
+          v <- atomically (getDB db bs)
+          putMVar mvar (Present v)
+        Nothing -> putMVar mvar Missing
+
+-- | Gets the value stored in a 'DBRef'.  The value is @'Just' x@ if @x@ was
+-- last value stored in the database using this key, or 'Nothing' if there is no
+-- value stored in the database.
 readDBRef :: DBRef a -> STM (Maybe a)
 readDBRef (DBRef _ _ ref) = do
   readTVar ref >>= \case
@@ -208,12 +279,16 @@ readDBRef (DBRef _ _ ref) = do
     Missing -> return Nothing
     Present a -> return (Just a)
 
+-- | Updates the value stored in a 'DBRef'.  The update will be persisted to
+-- storage soon, but not synchronously.
 writeDBRef :: DBStorable a => DBRef a -> a -> STM ()
 writeDBRef (DBRef db dbkey ref) a = do
   writeTVar ref (Present a)
   d <- readTVar (dbDirty db)
   writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Just (putDB a)) d)
 
+-- | Deletes the value stored in a 'DBRef'.  The delete will be persisted to
+-- storage soon, but not synchronously.
 delDBRef :: DBStorable a => DBRef a -> STM ()
 delDBRef (DBRef db dbkey ref) = do
   writeTVar ref Missing
