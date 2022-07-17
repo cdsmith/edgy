@@ -220,12 +220,18 @@ checkWriteQueue db maxLen = do
   dirty <- readTVar (dbDirty db)
   when (Map.size dirty > maxLen) retry
 
+failIfClosing :: DB -> STM ()
+failIfClosing db = do
+  c <- readTVar (dbClosing db)
+  when c $ error "DB is closing"
+
 -- | Retrieves a 'DBRef' from a 'DB' for the given key.  Throws an exception if
 -- the 'DBRef' requested has a different type from a previous time the key was
 -- used in this process, or if a serialized value in persistent storage cannot
 -- be parsed.
 getDBRef :: forall a. DBStorable a => DB -> String -> STM (DBRef a)
-getDBRef db key =
+getDBRef db key = do
+  failIfClosing db
   SMap.lookup key (dbRefs db) >>= \case
     Just (tr, weakRef)
       | tr == typeRep (Proxy @a) ->
@@ -273,7 +279,8 @@ getDBRef db key =
 -- last value stored in the database using this key, or 'Nothing' if there is no
 -- value stored in the database.
 readDBRef :: DBRef a -> STM (Maybe a)
-readDBRef (DBRef _ _ ref) = do
+readDBRef (DBRef db _ ref) = do
+  failIfClosing db
   readTVar ref >>= \case
     Loading -> retry
     Missing -> return Nothing
@@ -283,6 +290,7 @@ readDBRef (DBRef _ _ ref) = do
 -- storage soon, but not synchronously.
 writeDBRef :: DBStorable a => DBRef a -> a -> STM ()
 writeDBRef (DBRef db dbkey ref) a = do
+  failIfClosing db
   writeTVar ref (Present a)
   d <- readTVar (dbDirty db)
   writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Just (putDB a)) d)
@@ -291,6 +299,7 @@ writeDBRef (DBRef db dbkey ref) a = do
 -- storage soon, but not synchronously.
 delDBRef :: DBStorable a => DBRef a -> STM ()
 delDBRef (DBRef db dbkey ref) = do
+  failIfClosing db
   writeTVar ref Missing
   d <- readTVar (dbDirty db)
   writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Nothing) d)
