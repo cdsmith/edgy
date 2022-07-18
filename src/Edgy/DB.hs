@@ -72,7 +72,7 @@ import qualified StmContainers.Map as SMap
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
 import System.FileLock (SharedExclusive (..), tryLockFile, unlockFile)
 import System.FilePath ((</>))
-import System.Mem.Weak (Weak, addFinalizer, deRefWeak, mkWeak)
+import System.Mem.Weak (Weak, deRefWeak, mkWeak)
 import Unsafe.Coerce (unsafeCoerce)
 
 -- | A type class for things that can be stored in a DBRef.  This is similar to
@@ -258,36 +258,34 @@ getDBRef db key = do
   where
     insert = do
       ref <- newTVar Loading
-      ptr <- unsafeIOToSTM $ do
-        ptr <- mkWeak ref (SomeTVar ref) Nothing
-        addFinalizer ref $
-          atomically $
-            SMap.focus
-              ( Focus.updateM
-                  ( \(tr, p) ->
-                      unsafeIOToSTM (deRefWeak p) >>= \case
-                        Nothing -> return Nothing
-                        Just _ -> return (Just (tr, p))
+      ptr <-
+        unsafeIOToSTM $
+          mkWeak ref (SomeTVar ref) $
+            Just $
+              atomically $
+                SMap.focus
+                  ( Focus.updateM
+                      ( \(tr, p) ->
+                          unsafeIOToSTM (deRefWeak p) >>= \case
+                            Nothing -> return Nothing
+                            Just _ -> return (Just (tr, p))
+                      )
                   )
-              )
-              key
-              (dbRefs db)
-        return ptr
+                  key
+                  (dbRefs db)
       SMap.insert (typeRep (Proxy @a), ptr) key (dbRefs db)
       v <- unsafeIOToSTM $ do
         mvar <- newEmptyMVar
-        _ <- forkIO $ readKey mvar
+        _ <- forkIO $ putMVar mvar =<< readKey
         takeMVar mvar
       writeTVar ref v
       return (DBRef db key ref)
 
-    readKey mvar = do
+    readKey = do
       readResult <- persistentRead (dbPersistence db) key
       case readResult of
-        Just bs -> do
-          v <- atomically (getDB db bs)
-          putMVar mvar (Present v)
-        Nothing -> putMVar mvar Missing
+        Just bs -> Present <$> atomically (getDB db bs)
+        Nothing -> return Missing
 
 -- | Gets the value stored in a 'DBRef'.  The value is @'Just' x@ if @x@ was
 -- last value stored in the database using this key, or 'Nothing' if there is no
