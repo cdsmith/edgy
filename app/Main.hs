@@ -33,7 +33,7 @@ import Edgy
     Target,
     TargetCardinality,
     addRelated,
-    filePersister,
+    filePersistence,
     getAttribute,
     getRelated,
     getUniverse,
@@ -161,7 +161,7 @@ missingTools person = do
 
 main :: IO ()
 main = do
-  persister <- filePersister ".db"
+  persister <- filePersistence ".db"
   withDB persister $ \db -> do
     getArgs >>= \case
       ["create"] -> atomically (runEdgy db bigBang) >> return ()

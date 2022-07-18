@@ -11,12 +11,12 @@
 -- persistent storage as well as in memory.
 --
 -- The choice of persistent storage is up to the user, and is specified with a
--- 'Persister'.  There is a default implementation called 'filePersister' that
--- uses files on disk.  Note that 'filePersister' doesn't guarantee
+-- 'Persistence'.  There is a default implementation called 'filePersistence'
+-- that uses files on disk.  Note that 'filePersistence' doesn't guarantee
 -- transactional atomicity in the presence of sudden termination of the process,
 -- such as in a power outage or system crash.  Therefore, for serious use,
--- it's recommended that you use a different 'Persister' implementation based on
--- a storage layer with stronger transactional guarantees.
+-- it's recommended that you use a different 'Persistence' implementation based
+-- on a storage layer with stronger transactional guarantees.
 --
 -- For this scheme to work at all, this process must be the only entity to
 -- access the persistent storage.  You may not even use a single-writer,
@@ -34,8 +34,8 @@ module Edgy.DB
     readDBRef,
     writeDBRef,
     delDBRef,
-    Persister (..),
-    filePersister,
+    Persistence (..),
+    filePersistence,
   )
 where
 
@@ -70,6 +70,7 @@ import qualified Focus
 import GHC.Conc (unsafeIOToSTM)
 import qualified StmContainers.Map as SMap
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile)
+import System.FileLock (SharedExclusive (..), tryLockFile, unlockFile)
 import System.FilePath ((</>))
 import System.Mem.Weak (Weak, addFinalizer, deRefWeak, mkWeak)
 import Unsafe.Coerce (unsafeCoerce)
@@ -93,15 +94,25 @@ data Possible a = Loading | Missing | Present a
 data SomeTVar = forall a. SomeTVar (TVar (Possible a))
 
 -- | A strategy for persisting values from 'DBRef' to some persistent storage.
--- The 'filePersister' implementation is provided as a quick way to get started,
--- but note the weaknesses in its documentation.
+-- The 'filePersistence' implementation is provided as a quick way to get
+-- started, but note the weaknesses in its documentation.
 --
--- A 'Persister' can read one value at a time, but should be able to atomically
+-- A 'Persistence' can read one value at a time, but should be able to atomically
 -- write/delete an entire set of keys at once, preferably atomically.
-data Persister
-  = Persister
-      (String -> IO (Maybe ByteString))
-      (Map String (Maybe ByteString) -> IO ())
+data Persistence = Persistence
+  { -- | Read a single value from persistent storage.  Return the serialized
+    -- representation if it exists, and Nothing otherwise.
+    persistentRead :: String -> IO (Maybe ByteString),
+    -- | Write (for 'Just' values) or delete (for 'Nothing' values) an entire
+    -- set of values to persistent storage.  The values should ideally be
+    -- written atomically, and if they are not then the implementation will be
+    -- vulnerable to inconsistent data and corruption if the process is suddenly
+    -- terminated.
+    persistentWrite :: Map String (Maybe ByteString) -> IO (),
+    -- | Perform any cleanup that is needed after the 'DB' is closed.  This can
+    -- include releasing locks, for example.
+    persistentFinish :: IO ()
+  }
 
 -- A currently open database in which 'DBRef's can be read and written.  See
 -- 'openDB', 'closeDB', and 'withDB' to manage 'DB' values.
@@ -115,8 +126,8 @@ data DB = DB
     -- 'dbRefs', which guarantees the value won't be read again until after the
     -- write is complete.  This is needed for consistency.
     dbDirty :: TVar (Map String (SomeTVar, Maybe ByteString)),
-    -- | The persister that is used for this database.
-    dbPersister :: Persister,
+    -- | The persistence that is used for this database.
+    dbPersistence :: Persistence,
     -- | If True, then 'closeDB' has been called, and the no new accesses to the
     -- 'DBRef's should be allowed.  This also triggers the writer thread to exit
     -- as soon as it has finished writing all dirty values.
@@ -146,32 +157,35 @@ instance DBStorable a => DBStorable (DBRef a) where
   getDB db bs = getDBRef db (decode bs)
   putDB (DBRef _ dbkey _) = encode dbkey
 
--- | A simple 'Persister' that stores data in a directory in the local
+-- | A simple 'Persistence' that stores data in a directory in the local
 -- filesystem.  This is an easy way to get started.  However, note that because
 -- writes are not atomic, your data can be corrupted during a crash or power
 -- outage.  For this reason, it's recommended that you use a different
--- 'Persister' for most applications.
-filePersister :: FilePath -> IO Persister
-filePersister dir = do
+-- 'Persistence' for most applications.
+filePersistence :: FilePath -> IO Persistence
+filePersistence dir = do
   createDirectoryIfMissing True dir
-  return $
-    Persister
-      ( \key -> do
-          ex <- doesFileExist (dir </> key)
-          if ex
-            then Just <$> BS.fromStrict <$> BS.readFile (dir </> key)
-            else return Nothing
-      )
-      ( \m -> forM_ (Map.toList m) $
-          \(key, mbs) -> case mbs of
-            Just bs -> BS.writeFile (dir </> key) (BS.toStrict bs)
-            Nothing -> removeFile (dir </> key)
-      )
+  tryLockFile (dir </> ".lock") Exclusive >>= \case
+    Nothing -> error "Directory is already in use"
+    Just lock ->
+      return $
+        Persistence
+          { persistentRead = \key -> do
+              ex <- doesFileExist (dir </> key)
+              if ex
+                then Just <$> BS.fromStrict <$> BS.readFile (dir </> key)
+                else return Nothing,
+            persistentWrite = \dirtyMap -> forM_ (Map.toList dirtyMap) $
+              \(key, mbs) -> case mbs of
+                Just bs -> BS.writeFile (dir </> key) (BS.toStrict bs)
+                Nothing -> removeFile (dir </> key),
+            persistentFinish = unlockFile lock
+          }
 
--- | Opens a 'DB' using the given 'Persister'.  The caller should guarantee that
--- 'closeDB' is called when the 'DB' is no longer needed.
-openDB :: Persister -> IO DB
-openDB persister@(Persister _ writer) = do
+-- | Opens a 'DB' using the given 'Persistence'.  The caller should guarantee
+-- that 'closeDB' is called when the 'DB' is no longer needed.
+openDB :: Persistence -> IO DB
+openDB persistence = do
   refs <- SMap.newIO
   dirty <- newTVarIO Map.empty
   closing <- newTVarIO False
@@ -184,14 +198,14 @@ openDB persister@(Persister _ writer) = do
         when (not c && Map.null d) retry
         when (not (Map.null d)) $ writeTVar dirty Map.empty
         return (d, c)
-      when (not (Map.null d)) $ writer (snd <$> d)
+      when (not (Map.null d)) $ persistentWrite persistence (snd <$> d)
       return (not c)
     atomically $ writeTVar closed True
   let db =
         DB
           { dbRefs = refs,
             dbDirty = dirty,
-            dbPersister = persister,
+            dbPersistence = persistence,
             dbClosing = closing,
             dbClosed = closed
           }
@@ -203,12 +217,13 @@ closeDB :: DB -> IO ()
 closeDB db = do
   atomically $ writeTVar (dbClosing db) True
   atomically $ readTVar (dbClosed db) >>= bool retry (return ())
+  persistentFinish (dbPersistence db)
 
 -- | Runs an action with a 'DB' open.  The 'DB' will be closed when the action
 -- is finished.  The 'DB' value should not be used after the action has
 -- returned.
-withDB :: Persister -> (DB -> IO ()) -> IO ()
-withDB persister f = bracket (openDB persister) closeDB f
+withDB :: Persistence -> (DB -> IO ()) -> IO ()
+withDB persistence f = bracket (openDB persistence) closeDB f
 
 -- | Check that there are at most the given number of queued writes to the
 -- database, and retries the transaction if so.  Adding this to the beginning of
@@ -267,8 +282,7 @@ getDBRef db key = do
       return (DBRef db key ref)
 
     readKey mvar = do
-      let (Persister reader _) = dbPersister db
-      readResult <- reader key
+      readResult <- persistentRead (dbPersistence db) key
       case readResult of
         Just bs -> do
           v <- atomically (getDB db bs)
