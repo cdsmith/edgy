@@ -258,21 +258,7 @@ getDBRef db key = do
   where
     insert = do
       ref <- newTVar Loading
-      ptr <-
-        unsafeIOToSTM $
-          mkWeak ref (SomeTVar ref) $
-            Just $
-              atomically $
-                SMap.focus
-                  ( Focus.updateM
-                      ( \(tr, p) ->
-                          unsafeIOToSTM (deRefWeak p) >>= \case
-                            Nothing -> return Nothing
-                            Just _ -> return (Just (tr, p))
-                      )
-                  )
-                  key
-                  (dbRefs db)
+      ptr <- unsafeIOToSTM $ mkWeak ref (SomeTVar ref) (Just cleanupKey)
       SMap.insert (typeRep (Proxy @a), ptr) key (dbRefs db)
       v <- unsafeIOToSTM $ do
         mvar <- newEmptyMVar
@@ -286,6 +272,19 @@ getDBRef db key = do
       case readResult of
         Just bs -> Present <$> atomically (getDB db bs)
         Nothing -> return Missing
+
+    cleanupKey =
+      atomically $
+        SMap.focus
+          ( Focus.updateM
+              ( \(tr, p) ->
+                  unsafeIOToSTM (deRefWeak p) >>= \case
+                    Nothing -> return Nothing
+                    Just _ -> return (Just (tr, p))
+              )
+          )
+          key
+          (dbRefs db)
 
 -- | Gets the value stored in a 'DBRef'.  The value is @'Just' x@ if @x@ was
 -- last value stored in the database using this key, or 'Nothing' if there is no
