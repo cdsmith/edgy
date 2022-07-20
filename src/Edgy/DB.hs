@@ -58,7 +58,7 @@ import Control.Concurrent.STM
 import Control.Exception (bracket)
 import Control.Monad (forM_, when)
 import Control.Monad.Extra (whileM)
-import Data.Binary (decode, encode)
+import qualified Data.Binary as Binary
 import Data.Bool (bool)
 import qualified Data.ByteString as BS
 import Data.ByteString.Lazy (ByteString)
@@ -78,11 +78,11 @@ import Unsafe.Coerce (unsafeCoerce)
 -- | A type class for things that can be stored in a DBRef.  This is similar to
 -- a serialization class like 'Binary', but reads have access to the 'DB' and
 -- the STM monad, which is important because it allows for one 'DBRef' to be
--- stored inside the value of another.  (In this case, 'getDB' will call
+-- stored inside the value of another.  (In this case, 'decode' will call
 -- 'getDBRef'.)
 class Typeable a => DBStorable a where
-  getDB :: DB -> ByteString -> STM a
-  putDB :: a -> ByteString
+  decode :: DB -> ByteString -> STM a
+  encode :: a -> ByteString
 
 -- | Internal state of a 'DBRef'.  'Loading' means that the value is already
 -- being loaded from persistent storage in a different thread, so the current
@@ -154,8 +154,8 @@ instance Show (DBRef a) where
   show (DBRef _ s _) = s
 
 instance DBStorable a => DBStorable (DBRef a) where
-  getDB db bs = getDBRef db (decode bs)
-  putDB (DBRef _ dbkey _) = encode dbkey
+  decode db bs = getDBRef db (Binary.decode bs)
+  encode (DBRef _ dbkey _) = Binary.encode dbkey
 
 -- | A simple 'Persistence' that stores data in a directory in the local
 -- filesystem.  This is an easy way to get started.  However, note that because
@@ -270,7 +270,7 @@ getDBRef db key = do
     readKey = do
       readResult <- persistentRead (dbPersistence db) key
       case readResult of
-        Just bs -> Present <$> atomically (getDB db bs)
+        Just bs -> Present <$> atomically (decode db bs)
         Nothing -> return Missing
 
     cleanupKey =
@@ -304,7 +304,7 @@ writeDBRef (DBRef db dbkey ref) a = do
   failIfClosing db
   writeTVar ref (Present a)
   d <- readTVar (dbDirty db)
-  writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Just (putDB a)) d)
+  writeTVar (dbDirty db) (Map.insert dbkey (SomeTVar ref, Just (encode a)) d)
 
 -- | Deletes the value stored in a 'DBRef'.  The delete will be persisted to
 -- storage soon, but not synchronously.

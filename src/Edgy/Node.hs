@@ -12,7 +12,7 @@
 
 module Edgy.Node where
 
-import Data.Binary (Binary (..))
+import Data.Binary (Binary)
 import qualified Data.Binary as Binary
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
@@ -46,8 +46,8 @@ instance
   (KnownSchema schema, Typeable nodeType) =>
   DBStorable (Node schema nodeType)
   where
-  putDB (Node ref) = putDB ref
-  getDB db bs = Node <$> getDB db bs
+  encode (Node ref) = encode ref
+  decode db bs = Node <$> decode db bs
 
 type AttributeKey :: Schema -> AttributeSpec -> Type
 data AttributeKey schema attr where
@@ -81,8 +81,8 @@ data AttributeVal schema attr where
     AttributeVal schema attr
 
 instance Binary (AttributeType attr) => Binary (AttributeVal schema attr) where
-  put (AttributeVal x) = put x
-  get = AttributeVal <$> get
+  put (AttributeVal x) = Binary.put x
+  get = AttributeVal <$> Binary.get
 
 type RelatedKey :: Schema -> RelationSpec -> Type
 data RelatedKey schema relation where
@@ -121,10 +121,10 @@ instance
   (KnownSchema schema, Typeable relation, Typeable (Target relation)) =>
   DBStorable (Nodes schema relation)
   where
-  putDB (Nodes uuid nodes) = Binary.encode (uuid, map putDB nodes)
-  getDB db bs = do
+  encode (Nodes uuid nodes) = Binary.encode (uuid, map encode nodes)
+  decode db bs = do
     let (uuid, nodes) = Binary.decode bs
-    Nodes uuid <$> mapM (getDB db) nodes
+    Nodes uuid <$> mapM (decode db) nodes
 
 type RelatedVal :: Schema -> RelationSpec -> Type
 data RelatedVal schema relation where
@@ -140,8 +140,8 @@ instance
   ) =>
   DBStorable (RelatedVal schema relation)
   where
-  putDB (RelatedVal ref) = putDB ref
-  getDB db bs = RelatedVal <$> getDB db bs
+  encode (RelatedVal ref) = encode ref
+  decode db bs = RelatedVal <$> decode db bs
 
 type NodeImpl :: Schema -> NodeType -> Type
 data NodeImpl schema nodeType
@@ -154,7 +154,7 @@ instance
   (KnownSchema schema, Typeable nodeType) =>
   DBStorable (NodeImpl schema nodeType)
   where
-  putDB (NodeImpl uuid attrs _) =
+  encode (NodeImpl uuid attrs _) =
     let attrMap =
           foldAttributes
             (Proxy :: Proxy schema)
@@ -174,7 +174,7 @@ instance
             mempty
      in Binary.encode (uuid, attrMap)
 
-  getDB _ bs = do
+  decode _ bs = do
     let (uuid, attrMap) = Binary.decode bs
     let attrs =
           foldAttributes
