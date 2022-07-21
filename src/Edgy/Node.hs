@@ -6,7 +6,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -17,7 +16,6 @@ import qualified Data.Binary as Binary
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
 import Data.GADT.Compare (GCompare (..), GEq (..), GOrdering (..))
-import Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (..))
@@ -38,8 +36,8 @@ import GHC.TypeLits (KnownSymbol, symbolVal)
 import PersistentSTM (DBRef, DBStorable (..))
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 
-type Node :: Schema -> NodeType -> Type
-newtype Node schema nodeType = Node (DBRef (NodeImpl schema nodeType))
+newtype Node (schema :: Schema) (nodeType :: NodeType)
+  = Node (DBRef (NodeImpl schema nodeType))
   deriving (Eq, Ord)
 
 instance
@@ -49,8 +47,7 @@ instance
   encode (Node ref) = encode ref
   decode db bs = Node <$> decode db bs
 
-type AttributeKey :: Schema -> AttributeSpec -> Type
-data AttributeKey schema attr where
+data AttributeKey (schema :: Schema) (attr :: AttributeSpec) where
   AttributeKey ::
     TypeRep attr ->
     AttributeKey schema attr
@@ -73,8 +70,7 @@ instance GCompare (AttributeKey schema) where
     GEQ -> GEQ
     GGT -> GGT
 
-type AttributeVal :: Schema -> AttributeSpec -> Type
-data AttributeVal schema attr where
+data AttributeVal (schema :: Schema) (attr :: AttributeSpec) where
   AttributeVal ::
     Binary (AttributeType attr) =>
     AttributeType attr ->
@@ -84,8 +80,7 @@ instance Binary (AttributeType attr) => Binary (AttributeVal schema attr) where
   put (AttributeVal x) = Binary.put x
   get = AttributeVal <$> Binary.get
 
-type RelatedKey :: Schema -> RelationSpec -> Type
-data RelatedKey schema relation where
+data RelatedKey (schema :: Schema) (relation :: RelationSpec) where
   RelatedKey :: TypeRep relation -> RelatedKey schema relation
 
 instance Eq (RelatedKey schema relation) where
@@ -106,7 +101,8 @@ instance GCompare (RelatedKey schema) where
     GEQ -> GEQ
     GGT -> GGT
 
-data Nodes schema relation = Nodes UUID [Node schema (Target relation)]
+data Nodes (schema :: Schema) (relation :: RelationSpec)
+  = Nodes UUID [Node schema (Target relation)]
 
 relatedKey ::
   forall (relation :: RelationSpec).
@@ -126,8 +122,7 @@ instance
     let (uuid, nodes) = Binary.decode bs
     Nodes uuid <$> mapM (decode db) nodes
 
-type RelatedVal :: Schema -> RelationSpec -> Type
-data RelatedVal schema relation where
+data RelatedVal schema (relation :: RelationSpec) where
   RelatedVal ::
     DBRef (Nodes schema relation) ->
     RelatedVal schema relation
@@ -143,8 +138,7 @@ instance
   encode (RelatedVal ref) = encode ref
   decode db bs = RelatedVal <$> decode db bs
 
-type NodeImpl :: Schema -> NodeType -> Type
-data NodeImpl schema nodeType
+data NodeImpl (schema :: Schema) (nodeType :: NodeType)
   = NodeImpl
       UUID
       (DMap (AttributeKey schema) (AttributeVal schema))

@@ -8,7 +8,6 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -36,13 +35,11 @@ data AttributeSpec where
   (:::) :: Symbol -> Type -> AttributeSpec
   (::?) :: Symbol -> Type -> AttributeSpec
 
-type AttributeName :: AttributeSpec -> Symbol
-type family AttributeName attr where
+type family AttributeName (attr :: AttributeSpec) :: Symbol where
   AttributeName (n ::: _) = n
   AttributeName (n ::? _) = n
 
-type AttributeType :: AttributeSpec -> Type
-type family AttributeType attr where
+type family AttributeType (attr :: AttributeSpec) :: Type where
   AttributeType (_ ::: t) = t
   AttributeType (_ ::? t) = t
 
@@ -53,24 +50,19 @@ data RelationSpec where
     NodeType ->
     RelationSpec
 
-type RelationName :: RelationSpec -> Symbol
-type family RelationName relation where
+type family RelationName (relation :: RelationSpec) :: Symbol where
   RelationName (Relation s _ _) = s
 
-type ExistenceSpec :: Symbol -> RelationSpec
-type ExistenceSpec typeName =
+type ExistenceSpec (typeName :: Symbol) =
   Relation typeName Many (DataNode typeName)
 
-type UniversalSpec :: Symbol -> RelationSpec
-type UniversalSpec typeName =
+type UniversalSpec (typeName :: Symbol) =
   Relation "Universe" One Universe
 
-type Target :: RelationSpec -> NodeType
-type family Target rel where
+type family Target (rel :: RelationSpec) where
   Target (Relation _ _ nodeType) = nodeType
 
-type TargetCardinality :: RelationSpec -> Cardinality
-type family TargetCardinality rel where
+type family TargetCardinality (rel :: RelationSpec) where
   TargetCardinality (Relation _ n _) = n
 
 -- | The kind for an edgy schema.  An edgy schema is itself a type, specifying
@@ -83,7 +75,6 @@ data SchemaDef where
   DefDirected :: RelationSpec -> RelationSpec -> SchemaDef
   DefSymmetric :: RelationSpec -> SchemaDef
 
-type KnownAttrs :: NodeType -> [AttributeSpec] -> Constraint
 class Typeable attrs => KnownAttrs nodeType attrs where
   foldNodeAttributes ::
     Proxy nodeType ->
@@ -130,8 +121,13 @@ instance KnownAttrs nodeType '[] where
   foldConstructor _ _ _ = id
   mapConstructor _ _ f = f
 
-type DupAttrCheck :: NodeType -> [AttributeSpec] -> Symbol -> Constraint
-type family DupAttrCheck nodeType attrs dupName where
+type family
+  DupAttrCheck
+    (nodeType :: NodeType)
+    (attrs :: [AttributeSpec])
+    (dupName :: Symbol) ::
+    Constraint
+  where
   DupAttrCheck nodeType ((name ::: _) : attrs) name =
     TypeError
       ( Text "Duplicate attribute: "
@@ -183,8 +179,7 @@ instance
   foldConstructor pType _ = foldConstructor pType (Proxy @attrs)
   mapConstructor pType _ f = mapConstructor pType (Proxy @attrs) f
 
-type KnownSchema :: Schema -> Constraint
-class Typeable schema => KnownSchema schema where
+class Typeable schema => KnownSchema (schema :: Schema) where
   foldAttributes ::
     forall (nodeType :: NodeType) (a :: Type).
     Typeable nodeType =>
@@ -311,13 +306,11 @@ instance
     where
       fwd = Proxy @(Relation name n nodeType)
 
-type Constructor :: [AttributeSpec] -> Type -> Type
-type family Constructor attrs t where
+type family Constructor (attrs :: [AttributeSpec]) t where
   Constructor ((_ ::: param) : attrs) t = param -> Constructor attrs t
   Constructor (_ : attrs) t = Constructor attrs t
   Constructor '[] t = t
 
-type HasNode :: Schema -> NodeType -> [AttributeSpec] -> Constraint
 class
   (KnownSchema schema, Typeable nodeType, KnownAttrs nodeType attrs) =>
   HasNode schema nodeType attrs
@@ -331,7 +324,6 @@ instance
   ) =>
   HasNode schema nodeType attrs
 
-type NodeLookup :: Schema -> NodeType -> [AttributeSpec] -> Constraint
 class NodeLookup schema nodeType attrs | schema nodeType -> attrs
 
 instance
@@ -352,7 +344,6 @@ instance
   ) =>
   HasNode '[] nodeType '[]
 
-type HasAttribute :: Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
 class
   ( KnownSchema schema,
     Typeable nodeType,
@@ -383,8 +374,6 @@ instance
   where
   attributeDefault = attributeLookupDefault
 
-type NodeAttributeLookup ::
-  NodeType -> [AttributeSpec] -> Symbol -> AttributeSpec -> Constraint
 class
   NodeAttributeLookup nodeType attrs name attr
     | attrs name -> attr,
@@ -437,8 +426,6 @@ instance
   where
   nodeAttributeLookupDefault = undefined
 
-type AttributeLookup ::
-  Schema -> NodeType -> Symbol -> AttributeSpec -> Constraint
 class
   AttributeLookup schema nodeType name attr
     | schema nodeType name -> attr,
@@ -474,14 +461,6 @@ instance
 
 data Mutability = Mutable | Immutable
 
-type HasRelation ::
-  Schema ->
-  NodeType ->
-  Symbol ->
-  RelationSpec ->
-  RelationSpec ->
-  Mutability ->
-  Constraint
 class
   ( KnownSchema schema,
     KnownSymbol name,
@@ -514,14 +493,6 @@ instance
   ) =>
   HasRelation schema nodeType name spec inverse mutable
 
-type RelationLookup ::
-  Schema ->
-  NodeType ->
-  Symbol ->
-  RelationSpec ->
-  RelationSpec ->
-  Mutability ->
-  Constraint
 class
   RelationLookup schema nodeType name spec inverse mutable
     | schema nodeType name -> spec inverse mutable

@@ -118,10 +118,10 @@ bigBang = do
 lookupByName ::
   forall
     (typeName :: Symbol)
-    {schema :: Schema}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}
-    {mutability :: Mutability}.
+    (schema :: Schema)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec)
+    (mutability :: Mutability).
   ( HasRelation schema Universe typeName spec inverse mutability,
     HasAttribute schema (DataNode typeName) "name" ("name" ::: String),
     Target spec ~ DataNode typeName,

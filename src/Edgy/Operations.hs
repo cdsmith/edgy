@@ -5,7 +5,6 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -18,7 +17,6 @@ import Control.Monad.STM.Class (MonadSTM (..))
 import Data.Binary (Binary)
 import Data.Dependent.Map (DMap)
 import qualified Data.Dependent.Map as DMap
-import Data.Kind (Type)
 import Data.List ((\\))
 import Data.Type.Equality (testEquality, (:~:) (..))
 import Data.Typeable (Proxy (..), Typeable)
@@ -72,8 +70,7 @@ import PersistentSTM
   )
 import Type.Reflection (TypeRep, typeRep)
 
-type Edgy :: Schema -> Type -> Type
-newtype Edgy schema a = Edgy (DB -> STM a)
+newtype Edgy (schema :: Schema) a = Edgy (DB -> STM a)
   deriving (Functor)
 
 runEdgy :: DB -> Edgy schema a -> STM a
@@ -106,7 +103,7 @@ newNodeRef db = do
     _ -> newNodeRef db
 
 getEdges ::
-  forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
+  forall (spec :: RelationSpec) (nodeType :: NodeType) (schema :: Schema).
   ( KnownSchema schema,
     Typeable nodeType,
     Typeable spec,
@@ -129,7 +126,7 @@ getEdges db (Node ref) =
     Nothing -> error ("node not found: " ++ show ref)
 
 modifyEdges ::
-  forall (spec :: RelationSpec) {nodeType :: NodeType} {schema :: Schema}.
+  forall (spec :: RelationSpec) (nodeType :: NodeType) (schema :: Schema).
   ( KnownSchema schema,
     Typeable nodeType,
     Typeable spec,
@@ -166,7 +163,7 @@ getUniverse = Edgy $ \db -> do
   return (Node ref)
 
 newNode ::
-  forall (schema :: Schema) (typeName :: Symbol) {attrs :: [AttributeSpec]}.
+  forall (schema :: Schema) (typeName :: Symbol) (attrs :: [AttributeSpec]).
   (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
   Constructor attrs (Edgy schema (Node schema (DataNode typeName)))
 newNode =
@@ -198,7 +195,7 @@ newNode =
       return node
 
 deleteNode ::
-  forall (typeName :: Symbol) {schema :: Schema} {attrs :: [AttributeSpec]}.
+  forall (typeName :: Symbol) (schema :: Schema) (attrs :: [AttributeSpec]).
   (KnownSymbol typeName, HasNode schema (DataNode typeName) attrs) =>
   Node schema (DataNode typeName) ->
   Edgy schema ()
@@ -223,9 +220,9 @@ deleteNode node@(Node ref) = Edgy $ \db -> do
 getAttribute ::
   forall
     (name :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {attr :: AttributeSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (attr :: AttributeSpec).
   HasAttribute schema nodeType name attr =>
   Node schema nodeType ->
   Edgy schema (AttributeType attr)
@@ -249,9 +246,9 @@ getAttribute (Node ref) = Edgy $ \_db -> do
 setAttribute ::
   forall
     (name :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {attr :: AttributeSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (attr :: AttributeSpec).
   HasAttribute schema nodeType name attr =>
   Node schema nodeType ->
   AttributeType attr ->
@@ -276,11 +273,11 @@ setAttribute (Node ref) value = Edgy $ \_db -> do
 getRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}
-    {mutability :: Mutability}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec)
+    (mutability :: Mutability).
   HasRelation schema nodeType relation spec inverse mutability =>
   Node schema nodeType ->
   Edgy schema (Numerous (TargetCardinality spec) (Node schema (Target spec)))
@@ -292,11 +289,11 @@ getRelated node = Edgy $ \db -> do
 isRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}
-    {mutability :: Mutability}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec)
+    (mutability :: Mutability).
   HasRelation schema nodeType relation spec inverse mutability =>
   Node schema nodeType ->
   Node schema (Target spec) ->
@@ -306,10 +303,10 @@ isRelated node target = Edgy $ \db -> elem target <$> getEdges @spec db node
 setRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec).
   HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Numerous (TargetCardinality spec) (Node schema (Target spec)) ->
@@ -324,10 +321,10 @@ setRelated a target = Edgy $ \db -> do
 addRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec).
   HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Node schema (Target spec) ->
@@ -339,10 +336,10 @@ addRelated a b = Edgy $ \db -> do
 removeRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec).
   HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Node schema (Target spec) ->
@@ -354,10 +351,10 @@ removeRelated a b = Edgy $ \db -> do
 clearRelated ::
   forall
     (relation :: Symbol)
-    {schema :: Schema}
-    {nodeType :: NodeType}
-    {spec :: RelationSpec}
-    {inverse :: RelationSpec}.
+    (schema :: Schema)
+    (nodeType :: NodeType)
+    (spec :: RelationSpec)
+    (inverse :: RelationSpec).
   HasRelation schema nodeType relation spec inverse Mutable =>
   Node schema nodeType ->
   Edgy schema ()
