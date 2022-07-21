@@ -33,23 +33,22 @@ import Edgy
     Target,
     TargetCardinality,
     addRelated,
-    filePersistence,
     getAttribute,
     getRelated,
     getUniverse,
     newNode,
     removeRelated,
     runEdgy,
-    withDB,
   )
 import GHC.TypeLits (Symbol, symbolVal)
+import PersistentSTM (filePersistence, withDB)
 import System.Environment (getArgs)
 
 type MySchema =
   '[ DefNode
        (DataNode "Person")
        '[ "name" ::: String,
-          "age" ::: Int
+          "age" ::? Int
         ],
      DefNode
        (DataNode "Activity")

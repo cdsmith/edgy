@@ -26,15 +26,6 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Edgy.Cardinality (KnownCardinality (..), Numerous)
-import Edgy.DB
-  ( DB,
-    DBRef,
-    checkWriteQueue,
-    delDBRef,
-    getDBRef,
-    readDBRef,
-    writeDBRef,
-  )
 import Edgy.Node
   ( AttributeKey (..),
     AttributeVal (..),
@@ -70,6 +61,15 @@ import Edgy.Schema
   )
 import GHC.Conc (unsafeIOToSTM)
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
+import PersistentSTM
+  ( DB,
+    DBRef,
+    deleteDBRef,
+    getDBRef,
+    readDBRef,
+    waitForMaxBacklog,
+    writeDBRef,
+  )
 import Type.Reflection (TypeRep, typeRep)
 
 type Edgy :: Schema -> Type -> Type
@@ -77,7 +77,7 @@ newtype Edgy schema a = Edgy (DB -> STM a)
   deriving (Functor)
 
 runEdgy :: DB -> Edgy schema a -> STM a
-runEdgy db (Edgy f) = checkWriteQueue db maxQueue >> f db
+runEdgy db (Edgy f) = waitForMaxBacklog db maxQueue >> f db
   where
     maxQueue = 10000
 
@@ -218,7 +218,7 @@ deleteNode node@(Node ref) = Edgy $ \db -> do
         delRemaining
     )
     (return ())
-  delDBRef ref
+  deleteDBRef ref
 
 getAttribute ::
   forall

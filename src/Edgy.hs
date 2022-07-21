@@ -14,14 +14,6 @@ module Edgy
     Edgy,
     runEdgy,
 
-    -- * The DB
-    DB,
-    Persistence (..),
-    filePersistence,
-    openDB,
-    closeDB,
-    withDB,
-
     -- * Nodes and operations
     Node,
     getUniverse,
@@ -56,7 +48,6 @@ module Edgy
 where
 
 import Edgy.Cardinality (Cardinality (..), Numerous)
-import Edgy.DB (DB, Persistence (..), closeDB, filePersistence, openDB, withDB)
 import Edgy.Node (Node)
 import Edgy.Operations
   ( Edgy,

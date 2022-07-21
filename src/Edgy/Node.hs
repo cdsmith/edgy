@@ -23,9 +23,9 @@ import Data.Proxy (Proxy (..))
 import Data.Type.Equality ((:~:) (..))
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
-import Edgy.DB
 import Edgy.Schema
-  ( AttributeSpec,
+  ( AttributeName,
+    AttributeSpec,
     AttributeType,
     KnownSchema (..),
     NodeType (..),
@@ -33,9 +33,9 @@ import Edgy.Schema
     RelationSpec (..),
     Schema,
     Target,
-    AttributeName
   )
 import GHC.TypeLits (KnownSymbol, symbolVal)
+import PersistentSTM (DBRef, DBStorable (..))
 import Type.Reflection (SomeTypeRep (..), TypeRep, typeRep)
 
 type Node :: Schema -> NodeType -> Type
