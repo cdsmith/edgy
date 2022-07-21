@@ -48,7 +48,7 @@ type MySchema =
   '[ DefNode
        (DataNode "Person")
        '[ "name" ::: String,
-          "age" ::? Int
+          "age" ::: Int
         ],
      DefNode
        (DataNode "Activity")
